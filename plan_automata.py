@@ -29,12 +29,6 @@ def prune_dfa_p1_co_reachable(
     transitions into them are removed. This is backward reachability from finals,
     not "the next cell isn't a goal."
 
-    **Stricter P2:** P1-only co-reachability is necessary but not sufficient for a
-    valid plan. Words that die under P2 form a (typically) **larger** set of bad
-    prefixes than P1-dead alone. That stricter cut is applied later on the
-    **product** NFA × DFA_P1 in ``compute_nfa_p2``, where universal /
-    branching constraints live—not on DFA_P1 in isolation.
-
     If there are no accepting DFA_P1 states (possible under P1 when no macro-state
     is all-goals), backward reachability is empty and pruning would erase the
     whole diagram — that would break product synchronization even when the
