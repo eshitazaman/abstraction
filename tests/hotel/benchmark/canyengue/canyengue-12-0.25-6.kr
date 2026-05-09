@@ -1,0 +1,77 @@
+plts:
+    formula launch   = (s=0)
+                     & (c=0)
+                     & (v1=0)
+                     & (v2=0)
+                     & (v3=0)
+                     & (v4=0)
+                     & (v5=0)
+                     & (v6=0)
+                     & (v7=0)
+                     & (v8=0)
+                     & (v9=0)
+                     & (v10=0)
+                     & (v11=0)
+                     & (v12=0);
+
+    formula complete = (c>=6);
+
+    module plts
+        s  : [0..12];
+        c  : [0..12];
+        v1 : [0..1];
+        v2 : [0..1];
+        v3 : [0..1];
+        v4 : [0..1];
+        v5 : [0..1];
+        v6 : [0..1];
+        v7 : [0..1];
+        v8 : [0..1];
+        v9 : [0..1];
+        v10 : [0..1];
+        v11 : [0..1];
+        v12 : [0..1];
+
+        [one] (s=0) -> 0.10:(s'=1)&(c'=min(12,c+(1-v1)))&(v1'=1) + 0.90:(s'=1)&(c'=c)&(v1'=1);
+        [two] (s=0) -> 0.00:(s'=2)&(c'=min(12,c+(1-v2)))&(v2'=1) + 1.00:(s'=2)&(c'=c)&(v2'=1);
+        [two] (s=1) -> 0.00:(s'=2)&(c'=min(12,c+(1-v2)))&(v2'=1) + 1.00:(s'=2)&(c'=c)&(v2'=1);
+        [three] (s=1) -> 0.94:(s'=3)&(c'=min(12,c+(1-v3)))&(v3'=1) + 0.06:(s'=3)&(c'=c)&(v3'=1);
+        [one] (s=2) -> 0.10:(s'=1)&(c'=min(12,c+(1-v1)))&(v1'=1) + 0.90:(s'=1)&(c'=c)&(v1'=1);
+        [four] (s=2) -> 0.58:(s'=4)&(c'=min(12,c+(1-v4)))&(v4'=1) + 0.42:(s'=4)&(c'=c)&(v4'=1);
+        [one] (s=3) -> 0.10:(s'=1)&(c'=min(12,c+(1-v1)))&(v1'=1) + 0.90:(s'=1)&(c'=c)&(v1'=1);
+        [four] (s=3) -> 0.58:(s'=4)&(c'=min(12,c+(1-v4)))&(v4'=1) + 0.42:(s'=4)&(c'=c)&(v4'=1);
+        [five] (s=3) -> 0.22:(s'=5)&(c'=min(12,c+(1-v5)))&(v5'=1) + 0.78:(s'=5)&(c'=c)&(v5'=1);
+        [two] (s=4) -> 0.00:(s'=2)&(c'=min(12,c+(1-v2)))&(v2'=1) + 1.00:(s'=2)&(c'=c)&(v2'=1);
+        [three] (s=4) -> 0.94:(s'=3)&(c'=min(12,c+(1-v3)))&(v3'=1) + 0.06:(s'=3)&(c'=c)&(v3'=1);
+        [six] (s=4) -> 0.30:(s'=6)&(c'=min(12,c+(1-v6)))&(v6'=1) + 0.70:(s'=6)&(c'=c)&(v6'=1);
+        [three] (s=5) -> 0.94:(s'=3)&(c'=min(12,c+(1-v3)))&(v3'=1) + 0.06:(s'=3)&(c'=c)&(v3'=1);
+        [six] (s=5) -> 0.30:(s'=6)&(c'=min(12,c+(1-v6)))&(v6'=1) + 0.70:(s'=6)&(c'=c)&(v6'=1);
+        [seven] (s=5) -> 0.91:(s'=7)&(c'=min(12,c+(1-v7)))&(v7'=1) + 0.09:(s'=7)&(c'=c)&(v7'=1);
+        [four] (s=6) -> 0.58:(s'=4)&(c'=min(12,c+(1-v4)))&(v4'=1) + 0.42:(s'=4)&(c'=c)&(v4'=1);
+        [five] (s=6) -> 0.22:(s'=5)&(c'=min(12,c+(1-v5)))&(v5'=1) + 0.78:(s'=5)&(c'=c)&(v5'=1);
+        [eight] (s=6) -> 0.36:(s'=8)&(c'=min(12,c+(1-v8)))&(v8'=1) + 0.64:(s'=8)&(c'=c)&(v8'=1);
+        [five] (s=7) -> 0.22:(s'=5)&(c'=min(12,c+(1-v5)))&(v5'=1) + 0.78:(s'=5)&(c'=c)&(v5'=1);
+        [eight] (s=7) -> 0.36:(s'=8)&(c'=min(12,c+(1-v8)))&(v8'=1) + 0.64:(s'=8)&(c'=c)&(v8'=1);
+        [nine] (s=7) -> 0.26:(s'=9)&(c'=min(12,c+(1-v9)))&(v9'=1) + 0.74:(s'=9)&(c'=c)&(v9'=1);
+        [six] (s=8) -> 0.30:(s'=6)&(c'=min(12,c+(1-v6)))&(v6'=1) + 0.70:(s'=6)&(c'=c)&(v6'=1);
+        [seven] (s=8) -> 0.91:(s'=7)&(c'=min(12,c+(1-v7)))&(v7'=1) + 0.09:(s'=7)&(c'=c)&(v7'=1);
+        [ten] (s=8) -> 0.94:(s'=10)&(c'=min(12,c+(1-v10)))&(v10'=1) + 0.06:(s'=10)&(c'=c)&(v10'=1);
+        [seven] (s=9) -> 0.91:(s'=7)&(c'=min(12,c+(1-v7)))&(v7'=1) + 0.09:(s'=7)&(c'=c)&(v7'=1);
+        [ten] (s=9) -> 0.94:(s'=10)&(c'=min(12,c+(1-v10)))&(v10'=1) + 0.06:(s'=10)&(c'=c)&(v10'=1);
+        [eleven] (s=9) -> 0.36:(s'=11)&(c'=min(12,c+(1-v11)))&(v11'=1) + 0.64:(s'=11)&(c'=c)&(v11'=1);
+        [eight] (s=10) -> 0.36:(s'=8)&(c'=min(12,c+(1-v8)))&(v8'=1) + 0.64:(s'=8)&(c'=c)&(v8'=1);
+        [nine] (s=10) -> 0.26:(s'=9)&(c'=min(12,c+(1-v9)))&(v9'=1) + 0.74:(s'=9)&(c'=c)&(v9'=1);
+        [twelve] (s=10) -> 0.82:(s'=12)&(c'=min(12,c+(1-v12)))&(v12'=1) + 0.18:(s'=12)&(c'=c)&(v12'=1);
+        [nine] (s=11) -> 0.26:(s'=9)&(c'=min(12,c+(1-v9)))&(v9'=1) + 0.74:(s'=9)&(c'=c)&(v9'=1);
+        [twelve] (s=11) -> 0.82:(s'=12)&(c'=min(12,c+(1-v12)))&(v12'=1) + 0.18:(s'=12)&(c'=c)&(v12'=1);
+        [ten] (s=12) -> 0.94:(s'=10)&(c'=min(12,c+(1-v10)))&(v10'=1) + 0.06:(s'=10)&(c'=c)&(v10'=1);
+        [eleven] (s=12) -> 0.36:(s'=11)&(c'=min(12,c+(1-v11)))&(v11'=1) + 0.64:(s'=11)&(c'=c)&(v11'=1);
+    endmodule
+endplts
+
+perception :
+    ((one.two.one.two.one.two.one.two.one.two.one.two)+(two.one.two.one.two.one.two.one.two.one.two.one)).((three.four.three.four.three.four.three.four.three.four.three.four)+(four.three.four.three.four.three.four.three.four.three.four.three)).((five.six.five.six.five.six.five.six.five.six.five.six)+(six.five.six.five.six.five.six.five.six.five.six.five)).((seven.eight.seven.eight.seven.eight.seven.eight.seven.eight.seven.eight)+(eight.seven.eight.seven.eight.seven.eight.seven.eight.seven.eight.seven)).((nine.ten.nine.ten.nine.ten.nine.ten.nine.ten.nine.ten)+(ten.nine.ten.nine.ten.nine.ten.nine.ten.nine.ten.nine)).((eleven.twelve.eleven.twelve.eleven.twelve.eleven.twelve.eleven.twelve.eleven.twelve)+(twelve.eleven.twelve.eleven.twelve.eleven.twelve.eleven.twelve.eleven.twelve.eleven))
+endperception
+
+property : Kh(launch,complete) >= 0.25
+endproperty

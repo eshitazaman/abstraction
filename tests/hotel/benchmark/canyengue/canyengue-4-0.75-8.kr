@@ -1,0 +1,37 @@
+plts:
+    formula launch   = (s=0)
+                     & (c=0)
+                     & (v1=0)
+                     & (v2=0)
+                     & (v3=0)
+                     & (v4=0);
+
+    formula complete = (c>=2);
+
+    module plts
+        s  : [0..4];
+        c  : [0..4];
+        v1 : [0..1];
+        v2 : [0..1];
+        v3 : [0..1];
+        v4 : [0..1];
+
+        [one] (s=0) -> 0.24:(s'=1)&(c'=min(4,c+(1-v1)))&(v1'=1) + 0.76:(s'=1)&(c'=c)&(v1'=1);
+        [two] (s=0) -> 0.91:(s'=2)&(c'=min(4,c+(1-v2)))&(v2'=1) + 0.09:(s'=2)&(c'=c)&(v2'=1);
+        [two] (s=1) -> 0.91:(s'=2)&(c'=min(4,c+(1-v2)))&(v2'=1) + 0.09:(s'=2)&(c'=c)&(v2'=1);
+        [three] (s=1) -> 0.98:(s'=3)&(c'=min(4,c+(1-v3)))&(v3'=1) + 0.02:(s'=3)&(c'=c)&(v3'=1);
+        [one] (s=2) -> 0.24:(s'=1)&(c'=min(4,c+(1-v1)))&(v1'=1) + 0.76:(s'=1)&(c'=c)&(v1'=1);
+        [four] (s=2) -> 0.16:(s'=4)&(c'=min(4,c+(1-v4)))&(v4'=1) + 0.84:(s'=4)&(c'=c)&(v4'=1);
+        [one] (s=3) -> 0.24:(s'=1)&(c'=min(4,c+(1-v1)))&(v1'=1) + 0.76:(s'=1)&(c'=c)&(v1'=1);
+        [four] (s=3) -> 0.16:(s'=4)&(c'=min(4,c+(1-v4)))&(v4'=1) + 0.84:(s'=4)&(c'=c)&(v4'=1);
+        [two] (s=4) -> 0.91:(s'=2)&(c'=min(4,c+(1-v2)))&(v2'=1) + 0.09:(s'=2)&(c'=c)&(v2'=1);
+        [three] (s=4) -> 0.98:(s'=3)&(c'=min(4,c+(1-v3)))&(v3'=1) + 0.02:(s'=3)&(c'=c)&(v3'=1);
+    endmodule
+endplts
+
+perception :
+    ((one.two.one.two.one.two.one.two.one.two.one.two.one.two.one.two)+(two.one.two.one.two.one.two.one.two.one.two.one.two.one.two.one)).((three.four.three.four.three.four.three.four.three.four.three.four.three.four.three.four)+(four.three.four.three.four.three.four.three.four.three.four.three.four.three.four.three))
+endperception
+
+property : Kh(launch,complete) >= 0.75
+endproperty

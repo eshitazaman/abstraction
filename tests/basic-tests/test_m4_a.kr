@@ -1,0 +1,19 @@
+plts: 
+
+formula initial = (s=0) | (s=1);
+formula fin = (s=4);
+
+module plts
+    s : [0..4];   
+    
+    [a] (s=0) -> 1:(s'=2);
+    [b] (s=1) -> 1:(s'=3);
+    [b](s=2) -> 1:(s'=4); 
+    [a](s=3) -> 1:(s'=4);
+
+endmodule
+endplts
+perception : (a.b) + (b.a)
+endperception
+property : Kh(initial,fin) >= 1
+endproperty 

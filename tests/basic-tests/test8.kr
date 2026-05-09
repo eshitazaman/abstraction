@@ -1,0 +1,16 @@
+plts: 
+
+module plts
+    v : bool; 
+    st : [0..2];   
+    [a] v = false -> 0.5:(v'=true) + 0.5:(v'=false); 
+    [b] v = true -> 0.1:(v'=true) + 0.9:(v'=false); 	
+    [b] v = false -> 0.1:(v'=true) + 0.9:(v'=false);
+endmodule
+endplts
+
+perception : b
+endperception
+
+property : Kh(!v&&(st=0),v) >= 0.1
+endproperty
