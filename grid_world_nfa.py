@@ -26,6 +26,7 @@ from automata.fa.nfa import NFA
 from typing import Set, Tuple, Optional, Iterable, Union, Mapping
 import argparse
 import random
+from time import perf_counter
 
 
 # Each preset maps an action symbol to its tuple of cardinal-step legs (dx, dy).
@@ -649,9 +650,11 @@ def main():
         print("BUILDING NP2 (P1 ∧ P2 AUTOMATON)")
         print("=" * 70)
 
+        np2_start = perf_counter()
         np2_obj, nfa_p2_dict, _, dfa_p1 = build_np2_automaton(
             nfa, verbose=True
         )
+        np2_elapsed = perf_counter() - np2_start
 
         if args.print_dfa_p1 or args.list_dfa_p1_transitions:
             print("\n" + "-" * 70)
@@ -702,6 +705,7 @@ def main():
 
         if np2_obj is None:
             print("\nNP2 is empty (no valid P1 ∧ P2 plan exists).")
+            print(f"NP2 build runtime: {np2_elapsed:.6f} seconds")
         else:
             trans_count = sum(
                 len(succs) for t in np2_obj.transitions.values() for succs in t.values()
@@ -711,6 +715,7 @@ def main():
             print(f"Final states: {len(np2_obj.final_states)}")
             print(f"Transitions: {trans_count}")
             print(f"Initial state: {np2_obj.initial_state}")
+            print(f"NP2 build runtime: {np2_elapsed:.6f} seconds")
     else:
         result = automata_based_plan_computation(
             nfa,

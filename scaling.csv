@@ -1,0 +1,2 @@
+scale,grid_step_deg,leg_short_deg,leg_long_deg,|S|,|delta|,|F|,variant,wall_s,|DFA_P1|,DFA_P1_finals,|product|,product_finals,|NFA_P2|,language_nonempty,shortest_plan,short_circuit_reason,inconclusive
+1,10,20,30,475,3536,6,otf,608.388,36720,4,3126736,10,3126736,True,11,,False

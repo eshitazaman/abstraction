@@ -17,6 +17,57 @@ from automata.fa.nfa import NFA
 from plts_to_nfa import build_nfa_from_file
 
 
+class BudgetExhausted(Exception):
+    """
+    Raised by ``nfa_to_dfa_p1`` / ``build_product_nfa_dfa_p1`` when 
+    supplied a size cap and the construction crossed it.
+
+    The exception carries a ``partial`` dict with whatever was built so far,
+    a ``stage`` label ("dfa_p1" or "product"), and the ``cap`` that was hit,
+    so wrappers can return a well-formed "inconclusive within budget" result
+    instead of losing the intermediate state.
+    """
+
+    def __init__(self, stage, cap, partial):
+        super().__init__(
+            f"{stage} construction exceeded budget of {cap} states"
+        )
+        self.stage = stage
+        self.cap = cap
+        self.partial = partial
+
+
+def compute_reach_F(nfa):
+    """
+    Set of NFA states from which a final state is reachable in some number
+    of steps (backward BFS on the transition graph).
+
+    Correctness of using this for pruning:
+        Any state s with s not in Reach_F cannot appear in a run that ends
+        inside F. Under P1 (universal acceptance) the final macro-state
+        must be a subset of F, so if a run through s survives inside a
+        macro-state M until the end, then M ⊄ F and the plan is rejected.
+        Under P2 the (state, action) pair that produces s must be dropped
+        anyway.  Precomputing Reach_F lets us skip that work.
+    """
+    reverse = {s: [] for s in nfa.states}
+    for s, trans in nfa.transitions.items():
+        for _, succs in trans.items():
+            for t in succs:
+                if t in reverse:
+                    reverse[t].append(s)
+
+    reach = set(nfa.final_states)
+    q = deque(reach)
+    while q:
+        t = q.popleft()
+        for s in reverse.get(t, ()):
+            if s not in reach:
+                reach.add(s)
+                q.append(s)
+    return reach
+
+
 def prune_dfa_p1_co_reachable(
     dfa_p1: dict,
 ) -> dict:
@@ -70,53 +121,98 @@ def prune_dfa_p1_co_reachable(
         "finals": new_finals,
         "transitions": new_transitions,
         "input_symbols": dfa_p1["input_symbols"],
+        "truncated": dfa_p1.get("truncated", False),
     }
 
 
-def nfa_to_dfa_p1(nfa, verbose=False):
+def nfa_to_dfa_p1(nfa, verbose=False, max_states=None):
     """
     P1-Determinization: Builds DFA_P1 where a state is final only if ALL 
     NFA states it contains are final (satisfying P1 condition).
-    
+
+    Args:
+        nfa: The input NFA.
+        verbose: Print progress every 10K macro-states discovered.
+        max_states: Optional hard cap on discovered macro-states. If the
+            cap is crossed, ``BudgetExhausted`` is raised with the partial
+            construction attached.
+
     Returns internal data structures for product construction.
     """
-    def get_nfa_transitions(state, symbol):
-        if state in nfa.transitions and symbol in nfa.transitions[state]:
-            return nfa.transitions[state][symbol]
-        return set()
-    
+    # Precompute action successors once per NFA state; this dominates cost
+    # for large NFAs with many actions per state. We do NOT prune here based
+    # on Reach_F: intersecting successor sets with Reach_F silently drops
+    # the "leaking" branches that P1's universal acceptance must see and
+    # reject, which is unsound. Any Reach_F-based reasoning is done at the
+    # pipeline level (checking whether s_init itself can reach F).
+    succs_of = {}
+    for s in nfa.states:
+        smap = nfa.transitions.get(s, {})
+        succs_of[s] = {
+            a: frozenset(succs) for a, succs in smap.items() if succs
+        }
+
     def dfa_transition(dfa_state, symbol):
         result = set()
         for nfa_state in dfa_state:
-            result = result.union(get_nfa_transitions(nfa_state, symbol))
+            sm = succs_of.get(nfa_state)
+            if sm is not None:
+                r = sm.get(symbol)
+                if r:
+                    result.update(r)
         return frozenset(result)
-    
+
     initial_dfa_state = frozenset({nfa.initial_state})
     dfa_states = set()
     dfa_transitions = {}
     worklist = deque([initial_dfa_state])
-    
+    # Track whether any accepting macro has been seen mid-construction
+    # (useful for early inspection of unbounded runs).
+    accepting_seen = 0
+
     while worklist:
         current = worklist.popleft()
         if current in dfa_states:
             continue
+
+        if max_states is not None and len(dfa_states) >= max_states:
+            partial = {
+                "states": dfa_states,
+                "initial": initial_dfa_state,
+                "finals": {
+                    s for s in dfa_states
+                    if s and s.issubset(nfa.final_states)
+                },
+                "transitions": dfa_transitions,
+                "input_symbols": nfa.input_symbols,
+                "truncated": True,
+                "accepting_seen_so_far": accepting_seen,
+            }
+            raise BudgetExhausted("dfa_p1", max_states, partial)
+
         dfa_states.add(current)
+        if current and current.issubset(nfa.final_states):
+            accepting_seen += 1
         if verbose and len(dfa_states) % 10000 == 0:
             print(
-                f"   ... DFA_P1 determinization in progress: {len(dfa_states)} states discovered "
-                f"(queued {len(worklist)})"
+                f"   ... DFA_P1 determinization in progress: "
+                f"{len(dfa_states)} states discovered "
+                f"(queued {len(worklist)}, "
+                f"accepting-so-far {accepting_seen})"
             )
         dfa_transitions[current] = {}
-        
+
         for symbol in nfa.input_symbols:
             next_state = dfa_transition(current, symbol)
             if next_state:
                 dfa_transitions[current][symbol] = next_state
                 if next_state not in dfa_states:
                     worklist.append(next_state)
-    
+
     # P1 condition: final only if ALL states are final
-    dfa_final_states = {s for s in dfa_states if s and s.issubset(nfa.final_states)}
+    dfa_final_states = {
+        s for s in dfa_states if s and s.issubset(nfa.final_states)
+    }
 
     dfa_p1 = {
         "states": dfa_states,
@@ -124,17 +220,21 @@ def nfa_to_dfa_p1(nfa, verbose=False):
         "finals": dfa_final_states,
         "transitions": dfa_transitions,
         "input_symbols": nfa.input_symbols,
+        "truncated": False,
     }
     return prune_dfa_p1_co_reachable(dfa_p1)
 
 
-def build_product_nfa_dfa_p1(nfa, dfa_p1, verbose=False):
+def build_product_nfa_dfa_p1(nfa, dfa_p1, verbose=False, max_states=None):
     """
     Builds the product automaton NFA x DFA_P1.
     
     States are pairs (s, ŝ) where s ∈ NFA states, ŝ ∈ DFA_P1 states.
     Transitions: ((s, ŝ), a, (s', ŝ')) exists iff (s, a, s') ∈ δ_NFA and (ŝ, a, ŝ') ∈ δ_DFA
     Final states: (s, ŝ) is final iff s ∈ F_NFA AND ŝ ∈ F_DFA_P1
+
+    ``max_states`` optionally caps the reachable product state count and
+    raises ``BudgetExhausted`` with a partial product attached if crossed.
     """
     def get_nfa_transitions(state, symbol):
         if state in nfa.transitions and symbol in nfa.transitions[state]:
@@ -158,7 +258,22 @@ def build_product_nfa_dfa_p1(nfa, dfa_p1, verbose=False):
         current = worklist.popleft()
         if current in product_states:
             continue
-        
+
+        if max_states is not None and len(product_states) >= max_states:
+            partial_finals = {
+                p for p in product_states
+                if p[0] in nfa.final_states and p[1] in dfa_p1["finals"]
+            }
+            partial = {
+                "states": product_states,
+                "initial": initial_product,
+                "finals": partial_finals,
+                "transitions": product_transitions,
+                "input_symbols": nfa.input_symbols,
+                "truncated": True,
+            }
+            raise BudgetExhausted("product", max_states, partial)
+
         s_nfa, s_dfa = current
         product_states.add(current)
         if verbose and len(product_states) % 25000 == 0:
@@ -192,6 +307,133 @@ def build_product_nfa_dfa_p1(nfa, dfa_p1, verbose=False):
         'finals': product_finals,
         'transitions': product_transitions,
         'input_symbols': nfa.input_symbols
+    }
+
+
+def build_product_on_the_fly(nfa, verbose=False, max_states=None):
+    """
+    On-the-fly build of the NFA × DFA_P1 product.
+
+    Runs a single BFS from (s_init, {s_init}), computing DFA_P1 macro
+    successors ``ŝ' = ⋃_{s ∈ ŝ} δ(s, a)`` lazily on demand and caching
+    them in ``dfa_transitions``. Avoids the separate ``nfa_to_dfa_p1``
+    pass entirely and never visits DFA_P1 macros that don't appear in
+    some reachable product pair.
+
+    Returns the same shape as ``build_product_nfa_dfa_p1``, plus:
+        * ``dfa_macros``      — the set of DFA_P1 macros encountered
+        * ``accepting_macros``— macros in dfa_macros that are subsets of F
+        * ``dfa_transitions`` — the cached δ_DFA[ŝ][a] table
+
+    Complexity is the same worst case as the two-stage pipeline (each
+    reachable product pair (s, ŝ) is visited once and each DFA transition
+    δ_DFA(ŝ, a) is computed once), but there is no wasted DFA_P1 pass
+    over macros that are unreachable in the product.
+    """
+    # Same successor precomputation trick as nfa_to_dfa_p1
+    succs_of = {}
+    for s in nfa.states:
+        succs_of[s] = {
+            a: frozenset(succs)
+            for a, succs in nfa.transitions.get(s, {}).items()
+            if succs
+        }
+
+    initial_macro = frozenset({nfa.initial_state})
+    initial_product = (nfa.initial_state, initial_macro)
+
+    product_states = set()
+    product_transitions = {}
+    dfa_transitions = {}
+    dfa_macros = set()
+    accepting_macros = set()
+    worklist = deque([initial_product])
+
+    while worklist:
+        current = worklist.popleft()
+        if current in product_states:
+            continue
+
+        if max_states is not None and len(product_states) >= max_states:
+            partial_finals = {
+                (s, m)
+                for (s, m) in product_states
+                if s in nfa.final_states and m in accepting_macros
+            }
+            partial = {
+                "states": product_states,
+                "initial": initial_product,
+                "finals": partial_finals,
+                "transitions": product_transitions,
+                "input_symbols": nfa.input_symbols,
+                "dfa_macros": dfa_macros,
+                "accepting_macros": accepting_macros,
+                "dfa_transitions": dfa_transitions,
+                "truncated": True,
+            }
+            raise BudgetExhausted("product-otf", max_states, partial)
+
+        s_nfa, s_dfa = current
+        product_states.add(current)
+
+        if s_dfa not in dfa_macros:
+            dfa_macros.add(s_dfa)
+            if s_dfa and s_dfa.issubset(nfa.final_states):
+                accepting_macros.add(s_dfa)
+
+        if verbose and len(product_states) % 25000 == 0:
+            print(
+                f"   ... on-the-fly product: {len(product_states)} states, "
+                f"{len(dfa_macros)} DFA macros, "
+                f"queued {len(worklist)}, "
+                f"accepting-macros-so-far {len(accepting_macros)}"
+            )
+
+        product_transitions[current] = {}
+        s_nfa_map = succs_of.get(s_nfa, {})
+
+        for symbol, nfa_succs in s_nfa_map.items():
+            # Lazy DFA transition: compute δ_DFA(ŝ, a) once and cache
+            dt = dfa_transitions.setdefault(s_dfa, {})
+            s_dfa_next = dt.get(symbol)
+            if s_dfa_next is None:
+                acc = set()
+                for s in s_dfa:
+                    sm = succs_of.get(s, {})
+                    r = sm.get(symbol)
+                    if r:
+                        acc |= r
+                s_dfa_next = frozenset(acc)
+                dt[symbol] = s_dfa_next
+
+            if not s_dfa_next:
+                continue
+
+            transitions_here = product_transitions[current].setdefault(
+                symbol, set()
+            )
+            for s_prime in nfa_succs:
+                new_pair = (s_prime, s_dfa_next)
+                transitions_here.add(new_pair)
+                if new_pair not in product_states:
+                    worklist.append(new_pair)
+
+    product_finals = {
+        (s, m)
+        for (s, m) in product_states
+        if s in nfa.final_states and m in accepting_macros
+    }
+
+    return {
+        "states": product_states,
+        "initial": initial_product,
+        "finals": product_finals,
+        "transitions": product_transitions,
+        "input_symbols": nfa.input_symbols,
+        "dfa_macros": dfa_macros,
+        "accepting_macros": accepting_macros,
+        "dfa_transitions": dfa_transitions,
+        "truncated": False,
     }
 
 
@@ -424,59 +666,241 @@ def nfa_p2_shortest_accepting_length(nfa_p2):
     return None
 
 
+def _empty_verdict(nfa, dfa_p1, product, reason, enumerate_plans, verbose,
+                   inconclusive=False):
+    """Build a fully-formed return dict for the "no valid plans" outcomes."""
+    empty_nfa_p2 = {
+        "states": set(),
+        "initial": None,
+        "finals": set(),
+        "transitions": {},
+        "input_symbols": nfa.input_symbols,
+        "iterations": 0,
+    }
+    stats = {
+        "nfa_states": len(nfa.states),
+        "nfa_transitions": sum(
+            len(succs)
+            for trans in nfa.transitions.values()
+            for succs in trans.values()
+        ),
+        "nfa_finals": len(nfa.final_states),
+        "dfa_p1_states": len(dfa_p1["states"]) if dfa_p1 else 0,
+        "dfa_p1_transitions": (
+            sum(len(t) for t in dfa_p1["transitions"].values()) if dfa_p1 else 0
+        ),
+        "dfa_p1_finals": len(dfa_p1["finals"]) if dfa_p1 else 0,
+        "product_states": len(product["states"]) if product else 0,
+        "product_transitions": (
+            sum(
+                len(s)
+                for t in product["transitions"].values()
+                for s in t.values()
+            )
+            if product
+            else 0
+        ),
+        "product_finals": len(product["finals"]) if product else 0,
+        "nfa_p2_reachable": 0,
+        "nfa_p2_unreachable": (
+            len(product["states"]) if product else 0
+        ),
+        "nfa_p2_transitions": 0,
+        "nfa_p2_finals": 0,
+        "language_nonempty": False,
+        "shortest_plan_length": None,
+        "short_circuit_reason": reason,
+        "inconclusive": inconclusive,
+    }
+    if verbose:
+        tag = "INCONCLUSIVE" if inconclusive else "L(NFA_P2) = ∅"
+        print(f"\n>>> {tag}: {reason}")
+    return {
+        "dfa_p1": dfa_p1
+        or {
+            "states": set(),
+            "initial": None,
+            "finals": set(),
+            "transitions": {},
+            "input_symbols": nfa.input_symbols,
+        },
+        "product": product
+        or {
+            "states": set(),
+            "initial": None,
+            "finals": set(),
+            "transitions": {},
+            "input_symbols": nfa.input_symbols,
+        },
+        "nfa_p2": empty_nfa_p2,
+        "valid_plans": set() if enumerate_plans and not inconclusive else None,
+        "language_nonempty": False,
+        "shortest_plan_length": None,
+        "stats": stats,
+        "unreachable_states": (
+            product["states"] if product else set()
+        ),
+        "short_circuit_reason": reason,
+        "inconclusive": inconclusive,
+    }
+
+
 def automata_based_plan_computation(
-    nfa, verbose=True, enumerate_plans=True
+    nfa,
+    verbose=True,
+    enumerate_plans=True,
+    filter_dead_states=True,
+    max_dfa_p1_states=None,
+    max_product_states=None,
+    short_circuit=True,
 ):
     """
     Computes all valid plans using the automata-based approach:
-    1. Build DFA_P1 (P1-determinization)
-    2. Build NFA x DFA_P1 (product automaton)
-    3. Compute NFA_P2 (maximal P2-restriction; Lemma 9 / Algorithm 2)
-    4. L(NFA_P2) = all valid plans (optional: skip enumeration)
+    1. (opt.) Prune NFA states that cannot reach F (correctness-preserving).
+    2. Build DFA_P1 (P1-determinization).
+    3. If DFA_P1 has no accepting macro-states, short-circuit: L(NFA_P2)=∅.
+    4. Build NFA x DFA_P1 (product automaton).
+    5. Compute NFA_P2 (maximal P2-restriction; Lemma 9 / Algorithm 2).
+    6. L(NFA_P2) = all valid plans (optional: skip enumeration).
 
     Args:
-        nfa: The input NFA
-        verbose: If True, print progress information
+        nfa: The input NFA.
+        verbose: If True, print progress information.
         enumerate_plans: If False, skip DFS enumeration of all words; use
             ``language_nonempty`` for existence.
+        filter_dead_states: If True (default), precompute Reach_F and prune
+            successors that can never lead to acceptance. Fast, sound.
+        max_dfa_p1_states: Optional cap on subset-construction size. If the
+            cap is crossed, the pipeline returns an "inconclusive" verdict
+            with partial DFA_P1 attached instead of running to completion.
+        max_product_states: Analogous cap on the product construction.
 
     Returns:
         Dictionary containing:
-        - 'dfa_p1': The P1-determinization
-        - 'product': The product automaton NFA × DFA_P1
-        - 'nfa_p2': The maximal P2-restriction
-        - 'valid_plans': Set of valid plan words, or None if enumerate_plans is False
-        - 'language_nonempty': True iff some P1∧P2 valid plan exists (any length)
-        - 'shortest_plan_length': Min number of moves in any accepting word, or None if empty
+        - 'dfa_p1': The P1-determinization (possibly partial if truncated)
+        - 'product': The product automaton NFA × DFA_P1 (possibly partial)
+        - 'nfa_p2': The maximal P2-restriction (empty on short-circuit)
+        - 'valid_plans': Set of valid plan words, or None
+        - 'language_nonempty': True iff some P1∧P2 valid plan exists
+        - 'shortest_plan_length': Min number of moves in any accepting word
+        - 'short_circuit_reason': Explanation string when we bailed early
+        - 'inconclusive': True iff we bailed out due to a budget cap
     """
     if verbose:
         print("\n" + "="*60)
         print("AUTOMATA-BASED PLAN COMPUTATION [NFA_P2: Lemma 9 / Algorithm 2]")
         print("="*60)
-    
-    # Step 1: Build DFA_P1
+
+    if filter_dead_states:
+        reach_F = compute_reach_F(nfa)
+        if verbose:
+            n_dead = len(nfa.states) - len(reach_F)
+            print(
+                f"\n0. Reach_F check: "
+                f"{len(reach_F)} states can reach F, "
+                f"{n_dead} cannot."
+            )
+        if nfa.initial_state not in reach_F:
+            return _empty_verdict(
+                nfa,
+                dfa_p1=None,
+                product=None,
+                reason=(
+                    "initial state cannot reach any final state in NFA "
+                    "(Reach_F does not contain s_init)"
+                ),
+                enumerate_plans=enumerate_plans,
+                verbose=verbose,
+            )
+
+    # Step 1: Build DFA_P1 (optionally budget-capped)
     if verbose:
         print("\n1. Building DFA_P1 (P1-determinization)...")
-    dfa_p1 = nfa_to_dfa_p1(nfa, verbose=verbose)
+    try:
+        dfa_p1 = nfa_to_dfa_p1(
+            nfa,
+            verbose=verbose,
+            max_states=max_dfa_p1_states,
+        )
+    except BudgetExhausted as e:
+        return _empty_verdict(
+            nfa,
+            dfa_p1=e.partial,
+            product=None,
+            reason=(
+                f"DFA_P1 construction exceeded budget of "
+                f"{e.cap} macro-states"
+            ),
+            enumerate_plans=enumerate_plans,
+            verbose=verbose,
+            inconclusive=True,
+        )
     if verbose:
         print(f"   States: {len(dfa_p1['states'])}")
-        print(f"   Final states: {dfa_p1['finals']}")
-    
-    # Step 2: Build product NFA × DFA_P1
+        print(f"   Final states: {len(dfa_p1['finals'])}")
+
+    # Short-circuit: no accepting DFA_P1 macro ⇒ L(NFA_P2) is empty.
+    # (Skipped when short_circuit=False so we can benchmark the pure two-stage
+    # pipeline that always builds the product regardless of emptiness.)
+    if short_circuit and not dfa_p1["finals"]:
+        return _empty_verdict(
+            nfa,
+            dfa_p1=dfa_p1,
+            product=None,
+            reason=(
+                "DFA_P1 has 0 accepting macro-states "
+                "(no reachable subset of F under universal P1)"
+            ),
+            enumerate_plans=enumerate_plans,
+            verbose=verbose,
+        )
+
+    # Step 2: Build product NFA × DFA_P1 (optionally budget-capped)
     if verbose:
         print("\n2. Building NFA x DFA_P1 (product automaton)...")
-    product = build_product_nfa_dfa_p1(nfa, dfa_p1, verbose=verbose)
-    # Count actual transitions (state, action, successor) triples
+    try:
+        product = build_product_nfa_dfa_p1(
+            nfa, dfa_p1, verbose=verbose, max_states=max_product_states
+        )
+    except BudgetExhausted as e:
+        return _empty_verdict(
+            nfa,
+            dfa_p1=dfa_p1,
+            product=e.partial,
+            reason=(
+                f"Product construction exceeded budget of "
+                f"{e.cap} states"
+            ),
+            enumerate_plans=enumerate_plans,
+            verbose=verbose,
+            inconclusive=True,
+        )
     product_trans = sum(len(succs) for trans in product['transitions'].values() for succs in trans.values())
     if verbose:
         print(f"   States: {len(product['states'])}")
-        print(f"   Final states: {product['finals']}")
+        print(f"   Final states: {len(product['finals'])}")
         print(f"   Transitions: {product_trans}")
-    
+
+    # If the product has no accepting states, L(NFA_P2)=∅ as well
+    # (accepting requires s in F_NFA AND ŝ in F_DFA_P1, so this is a
+    # slightly stricter check than the DFA_P1-only test above). Skipped
+    # under short_circuit=False so pure two-stage still runs the P2 fixpoint.
+    if short_circuit and not product["finals"]:
+        return _empty_verdict(
+            nfa,
+            dfa_p1=dfa_p1,
+            product=product,
+            reason=(
+                "Product NFA × DFA_P1 has 0 accepting states"
+            ),
+            enumerate_plans=enumerate_plans,
+            verbose=verbose,
+        )
+
     # Step 3: Compute NFA_P2
     if verbose:
         print("\n3. Computing NFA_P2 (iterative P2 restriction)...")
-    
+
     nfa_p2 = compute_nfa_p2(product, verbose=verbose)
     
     # Count transitions in NFA_P2
@@ -542,6 +966,8 @@ def automata_based_plan_computation(
         'nfa_p2_finals': len(nfa_p2['finals']),
         'language_nonempty': language_nonempty,
         'shortest_plan_length': shortest_plan_length,
+        'short_circuit_reason': None,
+        'inconclusive': False,
     }
 
     return {
@@ -552,7 +978,223 @@ def automata_based_plan_computation(
         'language_nonempty': language_nonempty,
         'shortest_plan_length': shortest_plan_length,
         'stats': stats,
-        'unreachable_states': unreachable_states
+        'unreachable_states': unreachable_states,
+        'short_circuit_reason': None,
+        'inconclusive': False,
+    }
+
+
+def automata_based_plan_on_the_fly(
+    nfa,
+    verbose=True,
+    enumerate_plans=True,
+    filter_dead_states=True,
+    max_product_states=None,
+):
+    """
+    On-the-fly variant of :func:`automata_based_plan_computation`.
+
+    Fuses DFA_P1 subset construction and product BFS into a single pass
+    (:func:`build_product_on_the_fly`), then runs the same P2 fixpoint
+    (:func:`compute_nfa_p2`) on the result.
+
+    Same guarantees, same return shape as ``automata_based_plan_computation``.
+    On empty inputs the empty-accepting-macros short-circuit still applies,
+    but here it can only fire *after* the full on-the-fly product has been
+    built (since we cannot know DFA_P1 has no accepting macros until we
+    have explored every reachable macro from ``s_init``).
+    """
+    if verbose:
+        print("\n" + "=" * 60)
+        print("AUTOMATA-BASED PLAN COMPUTATION [on-the-fly product]")
+        print("=" * 60)
+
+    if filter_dead_states:
+        reach_F = compute_reach_F(nfa)
+        if verbose:
+            n_dead = len(nfa.states) - len(reach_F)
+            print(
+                f"\n0. Reach_F check: "
+                f"{len(reach_F)} states can reach F, "
+                f"{n_dead} cannot."
+            )
+        if nfa.initial_state not in reach_F:
+            return _empty_verdict(
+                nfa,
+                dfa_p1=None,
+                product=None,
+                reason=(
+                    "initial state cannot reach any final state in NFA "
+                    "(Reach_F does not contain s_init)"
+                ),
+                enumerate_plans=enumerate_plans,
+                verbose=verbose,
+            )
+
+    if verbose:
+        print(
+            "\n1+2. Building product on-the-fly (fused subset + product BFS)..."
+        )
+    try:
+        product = build_product_on_the_fly(
+            nfa, verbose=verbose, max_states=max_product_states
+        )
+    except BudgetExhausted as e:
+        partial_dfa_p1 = {
+            "states": e.partial.get("dfa_macros", set()),
+            "initial": frozenset({nfa.initial_state}),
+            "finals": e.partial.get("accepting_macros", set()),
+            "transitions": {
+                m: dict(t)
+                for m, t in e.partial.get("dfa_transitions", {}).items()
+            },
+            "input_symbols": nfa.input_symbols,
+            "truncated": True,
+        }
+        return _empty_verdict(
+            nfa,
+            dfa_p1=partial_dfa_p1,
+            product=e.partial,
+            reason=(
+                f"On-the-fly product construction exceeded budget of "
+                f"{e.cap} states"
+            ),
+            enumerate_plans=enumerate_plans,
+            verbose=verbose,
+            inconclusive=True,
+        )
+
+    # Synthesize a DFA_P1-shaped dict from the on-the-fly by-product so
+    # that callers depending on ``result['dfa_p1']`` still work.
+    dfa_p1 = {
+        "states": product["dfa_macros"],
+        "initial": frozenset({nfa.initial_state}),
+        "finals": product["accepting_macros"],
+        "transitions": product["dfa_transitions"],
+        "input_symbols": nfa.input_symbols,
+        "truncated": False,
+    }
+    product_trans = sum(
+        len(s)
+        for t in product["transitions"].values()
+        for s in t.values()
+    )
+    if verbose:
+        print(
+            f"   Product states: {len(product['states'])}, "
+            f"DFA macros seen: {len(product['dfa_macros'])}, "
+            f"accepting macros: {len(product['accepting_macros'])}, "
+            f"product finals: {len(product['finals'])}, "
+            f"transitions: {product_trans}"
+        )
+
+    if not product["accepting_macros"]:
+        return _empty_verdict(
+            nfa,
+            dfa_p1=dfa_p1,
+            product=product,
+            reason=(
+                "on-the-fly DFA_P1 has 0 accepting macro-states "
+                "(no reachable subset of F under universal P1)"
+            ),
+            enumerate_plans=enumerate_plans,
+            verbose=verbose,
+        )
+
+    if not product["finals"]:
+        return _empty_verdict(
+            nfa,
+            dfa_p1=dfa_p1,
+            product=product,
+            reason="on-the-fly product has 0 accepting states",
+            enumerate_plans=enumerate_plans,
+            verbose=verbose,
+        )
+
+    if verbose:
+        print("\n3. Computing NFA_P2 (iterative P2 restriction)...")
+    nfa_p2 = compute_nfa_p2(product, verbose=verbose)
+
+    nfa_p2_trans = 0
+    for state, trans in nfa_p2["transitions"].items():
+        for _, succs in trans.items():
+            if isinstance(succs, (list, set)):
+                nfa_p2_trans += len(succs)
+            else:
+                nfa_p2_trans += 1
+
+    reachable_states = nfa_p2["states"]
+    unreachable_states = product["states"] - reachable_states
+
+    if verbose:
+        print(f"   Reachable states: {len(reachable_states)}")
+        print(f"   Unreachable states: {len(unreachable_states)}")
+        print(f"   Total states: {len(product['states'])}")
+        print(f"   Transitions: {nfa_p2_trans}")
+        print(f"   Final states: {len(nfa_p2['finals'])}")
+        if "iterations" in nfa_p2:
+            print(f"   Iterations: {nfa_p2['iterations']}")
+
+    language_nonempty = nfa_p2_language_nonempty(nfa_p2)
+    shortest_plan_length = nfa_p2_shortest_accepting_length(nfa_p2)
+
+    if enumerate_plans:
+        if verbose:
+            print("\n4. Enumerating valid plans from L(NFA_P2)...")
+        valid_plans = enumerate_valid_plans(nfa_p2)
+        if verbose:
+            print(f"   Valid plans: {valid_plans if valid_plans else 'None'}")
+    else:
+        valid_plans = None
+        if verbose:
+            print("\n4. Skipping plan enumeration (enumerate_plans=False).")
+            print(
+                f"   L(NFA_P2) non-empty (exists some P1∧P2 plan): "
+                f"{language_nonempty}"
+            )
+            if language_nonempty:
+                print(
+                    f"   Shortest valid plan length (moves): "
+                    f"{shortest_plan_length}"
+                )
+
+    stats = {
+        "nfa_states": len(nfa.states),
+        "nfa_transitions": sum(
+            len(succs)
+            for trans in nfa.transitions.values()
+            for succs in trans.values()
+        ),
+        "nfa_finals": len(nfa.final_states),
+        "dfa_p1_states": len(product["dfa_macros"]),
+        "dfa_p1_transitions": sum(
+            len(t) for t in product["dfa_transitions"].values()
+        ),
+        "dfa_p1_finals": len(product["accepting_macros"]),
+        "product_states": len(product["states"]),
+        "product_transitions": product_trans,
+        "product_finals": len(product["finals"]),
+        "nfa_p2_reachable": len(reachable_states),
+        "nfa_p2_unreachable": len(unreachable_states),
+        "nfa_p2_transitions": nfa_p2_trans,
+        "nfa_p2_finals": len(nfa_p2["finals"]),
+        "language_nonempty": language_nonempty,
+        "shortest_plan_length": shortest_plan_length,
+        "short_circuit_reason": None,
+        "inconclusive": False,
+    }
+
+    return {
+        "dfa_p1": dfa_p1,
+        "product": product,
+        "nfa_p2": nfa_p2,
+        "valid_plans": valid_plans,
+        "language_nonempty": language_nonempty,
+        "shortest_plan_length": shortest_plan_length,
+        "stats": stats,
+        "unreachable_states": unreachable_states,
+        "short_circuit_reason": None,
+        "inconclusive": False,
     }
 
 
