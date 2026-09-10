@@ -1,0 +1,7 @@
+.DS_Store
+**/.DS_Store
+__pycache__/
+*.py[cod]
+*.py.zip
+arm2d2_model.py.zip
+.venv/
