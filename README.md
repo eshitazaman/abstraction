@@ -161,6 +161,70 @@ The script calls `main()` only when executed as `__main__`:
 python grid_world_nfa.py [options]
 ```
 
+## FOND / IPPC chain examples (lemma pipeline)
+
+These are **chain encodings** of Tireworld, beam-walk, doors, and first-responders (probability / `oneof` → nondeterministic branches, dead-ends replaced by a total reset so a finite P1∧P2 *word* exists). They are **not** the official PDDL instances; a FOND *policy* planner would run those instead.
+
+The lemma-based algorithm is always `automata_based_plan_computation` in `plan_automata.py` (DFA\(_{P_1}\) → product → NFA\(_{P_2}\) / Lemma 9).
+
+### Single instance
+
+From the repo root (activate `.venv` if you use one):
+
+```python
+from tireworld import build_tireworld_nfa
+from plan_automata import automata_based_plan_computation
+
+nfa = build_tireworld_nfa(5)  # N = number of cities
+result = automata_based_plan_computation(nfa, verbose=True, enumerate_plans=False)
+print(result["language_nonempty"], result["shortest_plan_length"])  # True, 8
+```
+
+Same pipeline, other domains (`N` is chain length: beam positions, rooms, or fire sites):
+
+```python
+from beam_walk import build_beam_walk_nfa
+from doors import build_doors_nfa
+from first_responders import build_first_responders_nfa
+
+nfa = build_beam_walk_nfa(5)           # k* = 12
+# nfa = build_doors_nfa(5)
+# nfa = build_first_responders_nfa(5)
+result = automata_based_plan_computation(nfa, verbose=True, enumerate_plans=False)
+```
+
+On-the-fly product (same lemmas, fused subset + product BFS):
+
+```python
+from plan_automata import automata_based_plan_on_the_fly
+result = automata_based_plan_on_the_fly(nfa, verbose=True, enumerate_plans=False)
+```
+
+| Domain | Builder | \(N=5\) shortest plan \(k^{*}\) |
+|--------|---------|--------------------------------|
+| Tireworld | `build_tireworld_nfa(N)` | \(2N-2 = 8\) |
+| Beam-walk | `build_beam_walk_nfa(N)` | \(3N-3 = 12\) |
+| Doors | `build_doors_nfa(N)` | \(3N-3 = 12\) |
+| First-responders | `build_first_responders_nfa(N)` | \(3N-3 = 12\) |
+
+`python tireworld.py --n 5` only **prints NFA sizes**; it does not run DFA\(_{P_1}\) / NFA\(_{P_2}\).
+
+### Scaling sweeps
+
+```bash
+# Tireworld only (variants: short-circuit, pure, otf)
+python scale_tireworld.py --scales 5 10 50 --variant short-circuit --verbose
+
+# One domain or all four; append metrics to CSV
+python scale_fond.py --domain tireworld --scales 5 10 50
+python scale_fond.py --domain beam-walk --scales 5 20 100
+python scale_fond.py --domain doors --scales 5 20 100
+python scale_fond.py --domain first-responders --scales 5 20 100
+python scale_fond.py --domain all --scales 5 50 100 --csv fond_scaling.csv
+```
+
+`--variant short-circuit` (default on `scale_tireworld.py`) is the lemma two-stage pipeline with an early exit if DFA\(_{P_1}\) has no accepting macros (does not fire on these nonempty instances).
+
 ## Optional: `nfa_p2_to_prism.py`
 
 Builds a grid NFA and writes **NFA\(_{P2}\)** as PRISM:
