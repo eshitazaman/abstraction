@@ -76,6 +76,37 @@ result = automata_based_plan_computation(nfa, verbose=True, enumerate_plans=True
 # result["nfa_p2"], result["valid_plans"], result["language_nonempty"], ...
 ```
 
+### Run an Arm2D2 Python model
+
+Python model variants in `models/` are discovered automatically when they
+provide `build_arm2d2_nfa()` (or the older `build_agustin_nfa()` name). Run
+one by module name, without the `.py` suffix:
+
+```bash
+python plan_automata.py --arm2d2-model 30d_goalMid_softBorder --exists-only
+python plan_automata.py --arm2d2-model 30d_goalMid_softBorder
+python plan_automata.py --arm2d2-model 30d_goalMid_softBorder --backend compact --exists-only
+```
+
+See all currently available model names with:
+
+```bash
+python plan_automata.py --help
+```
+
+`--exists-only` avoids bounded plan enumeration, which is useful for larger
+Arm2D2 models. The `models/` directory is made import-compatible with the
+existing `arm2d2_models.common` imports used by the variants.
+
+The explicit backend in this repository can grow quickly. Add
+`--max-dfa-p1-states N` or `--max-product-states N` to stop safely with an
+inconclusive result rather than continuing past a chosen state budget.
+
+The opt-in `--backend compact` path stores P1 beliefs and concrete product
+fibers as integer bitmasks. It computes the same P1/P2 language while avoiding
+the explicit backend's per-pair Python objects. The explicit backend remains
+the default while the compact implementation is evaluated across benchmarks.
+
 ## `grid_world_nfa.py` — grid robot benchmarks
 
 Builds an NFA for an \(n \times n\) grid (robot at bottom-left style coordinates), then runs the same **P1 \(\land\) P2** pipeline (or only existence / NP2 construction).

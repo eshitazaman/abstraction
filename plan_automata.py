@@ -11,10 +11,65 @@ The approach:
 4. L(NFA_P2) = all valid plans
 """
 
+import ast
 from collections import deque
+from importlib import import_module
+from pathlib import Path
 
 from automata.fa.nfa import NFA
 from plts_to_nfa import build_nfa_from_file
+
+
+def arm2d2_models_directory():
+    """Return the repository directory containing Arm2D2 model modules."""
+
+    return Path(__file__).resolve().with_name("models")
+
+
+def discover_arm2d2_models(models_dir=None):
+    """Return runnable Arm2D2 model names from ``models/``.
+
+    A model is discoverable when its top-level module exposes either
+    ``build_arm2d2_nfa`` or the older ``build_agustin_nfa`` compatibility
+    function. Supporting modules such as ``common.py`` are ignored.
+    """
+
+    directory = Path(models_dir) if models_dir is not None else arm2d2_models_directory()
+    if not directory.is_dir():
+        return ()
+
+    names = []
+    for path in directory.glob("*.py"):
+        if path.name == "__init__.py":
+            continue
+        try:
+            module = ast.parse(path.read_text(encoding="utf-8"), path.name)
+        except (OSError, SyntaxError, UnicodeError):
+            continue
+        functions = {
+            node.name
+            for node in module.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        if {"build_arm2d2_nfa", "build_agustin_nfa"} & functions:
+            names.append(path.stem)
+    return tuple(sorted(names))
+
+
+def load_arm2d2_model(model_name):
+    """Build and return an NFA from a discovered ``models/<name>.py`` module."""
+
+    if model_name not in discover_arm2d2_models():
+        available = ", ".join(discover_arm2d2_models()) or "none"
+        raise ValueError(
+            f"unknown Arm2D2 model {model_name!r}; available models: {available}"
+        )
+
+    module = import_module(f"arm2d2_models.{model_name}")
+    builder = getattr(module, "build_arm2d2_nfa", None)
+    if builder is None:
+        builder = getattr(module, "build_agustin_nfa")
+    return builder()
 
 
 class BudgetExhausted(Exception):
@@ -758,6 +813,7 @@ def automata_based_plan_computation(
     max_dfa_p1_states=None,
     max_product_states=None,
     short_circuit=True,
+    backend="explicit",
 ):
     """
     Computes all valid plans using the automata-based approach:
@@ -779,6 +835,8 @@ def automata_based_plan_computation(
             cap is crossed, the pipeline returns an "inconclusive" verdict
             with partial DFA_P1 attached instead of running to completion.
         max_product_states: Analogous cap on the product construction.
+        backend: ``"explicit"`` (default) or the exact ``"compact"`` bitmask
+            representation. State budgets apply only to the explicit backend.
 
     Returns:
         Dictionary containing:
@@ -791,6 +849,21 @@ def automata_based_plan_computation(
         - 'short_circuit_reason': Explanation string when we bailed early
         - 'inconclusive': True iff we bailed out due to a budget cap
     """
+    if backend == "compact":
+        if max_dfa_p1_states is not None or max_product_states is not None:
+            raise ValueError(
+                "state budgets are currently supported only by the explicit backend"
+            )
+        from compact_plan_automata import compact_plan_computation
+
+        return compact_plan_computation(
+            nfa,
+            enumerate_plans=enumerate_plans,
+            verbose=verbose,
+        )
+    if backend != "explicit":
+        raise ValueError("backend must be 'explicit' or 'compact'")
+
     if verbose:
         print("\n" + "="*60)
         print("AUTOMATA-BASED PLAN COMPUTATION [NFA_P2: Lemma 9 / Algorithm 2]")
@@ -1341,9 +1414,45 @@ if __name__ == "__main__":
                         help='Use the example NFA instead of loading from file')
     parser.add_argument('--file', type=str, default='salon-4-0.25.kr',
                         help='Path to .kr file (default: salon-4-0.25.kr)')
+    parser.add_argument(
+        '--arm2d2-model',
+        choices=discover_arm2d2_models(),
+        help='Run a Python model discovered in models/ through the planner',
+    )
     parser.add_argument('--deterministic', '-d', action='store_true',
                         help='Use deterministic NFA generation')
+    parser.add_argument(
+        '--exists-only',
+        action='store_true',
+        help='Compute plan existence and shortest length without enumerating words',
+    )
+    parser.add_argument(
+        '--backend',
+        choices=('explicit', 'compact'),
+        default='explicit',
+        help='Planner representation (default: explicit)',
+    )
+    parser.add_argument(
+        '--max-dfa-p1-states',
+        type=int,
+        default=None,
+        help='Stop with an inconclusive result after this many DFA_P1 states',
+    )
+    parser.add_argument(
+        '--max-product-states',
+        type=int,
+        default=None,
+        help='Stop with an inconclusive result after this many product states',
+    )
     args = parser.parse_args()
+    if args.arm2d2_model and args.example:
+        parser.error('--arm2d2-model and --example cannot be used together')
+    if args.arm2d2_model and args.deterministic:
+        parser.error('--deterministic applies only to PLTS files')
+    if args.backend == 'compact' and (
+        args.max_dfa_p1_states is not None or args.max_product_states is not None
+    ):
+        parser.error('state budgets currently apply only to --backend explicit')
     
     # Build the NFA
     if args.example:
@@ -1491,6 +1600,20 @@ if __name__ == "__main__":
         print(f"Initial: {my_nfa.initial_state}")
         print(f"Finals: {my_nfa.final_states}")
         print("L(NFA) = {a^n b | n >= 1} = {ab, aab, aaab, ...}")
+    elif args.arm2d2_model:
+        my_nfa = load_arm2d2_model(args.arm2d2_model)
+        n_transitions = sum(
+            len(successors)
+            for action_map in my_nfa.transitions.values()
+            for successors in action_map.values()
+        )
+        print("=" * 60)
+        print(f"ARM2D2 MODEL: {args.arm2d2_model}")
+        print("=" * 60)
+        print(f"Initial state: {my_nfa.initial_state}")
+        print(f"States: {len(my_nfa.states)}")
+        print(f"Final states: {len(my_nfa.final_states)}")
+        print(f"Transitions: {n_transitions}")
     else:
         from plts_to_nfa import build_nfa_from_file_with_stats
         my_nfa, stats = build_nfa_from_file_with_stats(args.file, deterministic=args.deterministic)
@@ -1504,13 +1627,21 @@ if __name__ == "__main__":
         print(f"Final states: {stats['num_final_states']}")
         print(f"Transitions: {stats['num_transitions']}")
     
-    result = automata_based_plan_computation(my_nfa, verbose=True)
+    result = automata_based_plan_computation(
+        my_nfa,
+        verbose=True,
+        enumerate_plans=not args.exists_only,
+        max_dfa_p1_states=args.max_dfa_p1_states,
+        max_product_states=args.max_product_states,
+        backend=args.backend,
+    )
 
     # Print summary table
     print("\n" + "=" * 70)
     print("SUMMARY")
     print("=" * 70)
     stats = result['stats']
+    print(f"Backend: {result.get('representation', 'explicit')}")
     print(f"{'Component':<30} {'States':>12} {'Transitions':>12} {'Finals':>10}")
     print("-" * 70)
     print(f"{'Input NFA':<30} {stats['nfa_states']:>12} {stats['nfa_transitions']:>12} {stats['nfa_finals']:>10}")
@@ -1518,6 +1649,8 @@ if __name__ == "__main__":
     print(f"{'Product (NFA × DFA_P1)':<30} {stats['product_states']:>12} {stats['product_transitions']:>12} {stats['product_finals']:>10}")
     print(f"{'NFA_P2 (reachable)':<30} {stats['nfa_p2_reachable']:>12} {stats['nfa_p2_transitions']:>12} {stats['nfa_p2_finals']:>10}")
     print(f"{'NFA_P2 (unreachable)':<30} {stats['nfa_p2_unreachable']:>12} {'-':>12} {'-':>10}")
+    if result.get('inconclusive'):
+        print(f"\nINCONCLUSIVE: {result['short_circuit_reason']}")
 
     # Show unreachable states if any
     if result['unreachable_states']:
@@ -1530,7 +1663,16 @@ if __name__ == "__main__":
     print("\n" + "=" * 70)
     print("VALID PLANS")
     print("=" * 70)
-    if result['valid_plans']:
+    if args.exists_only:
+        if result.get('inconclusive'):
+            print("No plan verdict: the configured state budget was exceeded.")
+        else:
+            print(
+                "Plan language non-empty: "
+                f"{result['language_nonempty']}"
+            )
+            print(f"Shortest valid plan length: {result['shortest_plan_length']}")
+    elif result['valid_plans']:
         plans = sorted(result['valid_plans'], key=lambda x: (len(x), x))
         print(f"L(NFA_P2): {len(plans)} words")
         for p in plans[:15]:
