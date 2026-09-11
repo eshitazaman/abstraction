@@ -835,8 +835,9 @@ def automata_based_plan_computation(
             cap is crossed, the pipeline returns an "inconclusive" verdict
             with partial DFA_P1 attached instead of running to completion.
         max_product_states: Analogous cap on the product construction.
-        backend: ``"explicit"`` (default) or the exact ``"compact"`` bitmask
-            representation. State budgets apply only to the explicit backend.
+        backend: ``"explicit"`` (default), ``"compact"`` bitmask transitions,
+            or ``"compact-csr"`` sparse transitions. State budgets apply only
+            to the explicit backend.
 
     Returns:
         Dictionary containing:
@@ -849,20 +850,26 @@ def automata_based_plan_computation(
         - 'short_circuit_reason': Explanation string when we bailed early
         - 'inconclusive': True iff we bailed out due to a budget cap
     """
-    if backend == "compact":
+    if backend in {"compact", "compact-csr"}:
         if max_dfa_p1_states is not None or max_product_states is not None:
             raise ValueError(
                 "state budgets are currently supported only by the explicit backend"
             )
-        from compact_plan_automata import compact_plan_computation
+        if backend == "compact-csr":
+            from compact_csr_plan_automata import compact_csr_plan_computation
 
-        return compact_plan_computation(
+            runner = compact_csr_plan_computation
+        else:
+            from compact_plan_automata import compact_plan_computation
+
+            runner = compact_plan_computation
+        return runner(
             nfa,
             enumerate_plans=enumerate_plans,
             verbose=verbose,
         )
     if backend != "explicit":
-        raise ValueError("backend must be 'explicit' or 'compact'")
+        raise ValueError("backend must be 'explicit', 'compact', or 'compact-csr'")
 
     if verbose:
         print("\n" + "="*60)
@@ -1428,7 +1435,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         '--backend',
-        choices=('explicit', 'compact'),
+        choices=('explicit', 'compact', 'compact-csr'),
         default='explicit',
         help='Planner representation (default: explicit)',
     )
@@ -1449,7 +1456,7 @@ if __name__ == "__main__":
         parser.error('--arm2d2-model and --example cannot be used together')
     if args.arm2d2_model and args.deterministic:
         parser.error('--deterministic applies only to PLTS files')
-    if args.backend == 'compact' and (
+    if args.backend != 'explicit' and (
         args.max_dfa_p1_states is not None or args.max_product_states is not None
     ):
         parser.error('state budgets currently apply only to --backend explicit')
