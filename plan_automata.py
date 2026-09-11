@@ -587,25 +587,30 @@ def compute_nfa_p2(product_nfa, verbose=False):
 
 def enumerate_valid_plans(nfa_p2, max_length=10):
     """
-    Enumerates all valid plans (words) accepted by NFA_P2 up to max_length.
-    These are all words that satisfy both P1 and P2.
+    Enumerate accepted plans containing at most ``max_length`` actions.
+
+    Plan words are stored as concatenated strings for compatibility, but action
+    labels may contain multiple characters (for example, ``shoulder_down``).
+    The bound must therefore be tracked separately from ``len(word)``.
     """
     if nfa_p2['initial'] is None:
         return set()
+    if max_length < 0:
+        raise ValueError("max_length must be non-negative")
     
     valid_words = set()
     
-    def dfs(state, word):
-        if len(word) > max_length:
+    def dfs(state, word, action_count):
+        if action_count > max_length:
             return
         if state in nfa_p2['finals']:
             valid_words.add(word)
         if state in nfa_p2['transitions']:
             for symbol, successors in nfa_p2['transitions'][state].items():
                 for succ in successors:
-                    dfs(succ, word + symbol)
+                    dfs(succ, word + symbol, action_count + 1)
     
-    dfs(nfa_p2['initial'], "")
+    dfs(nfa_p2['initial'], "", 0)
     return valid_words
 
 

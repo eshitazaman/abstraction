@@ -5,7 +5,11 @@ Smoke tests for the correctness of the optimizations added to
 
 from automata.fa.nfa import NFA
 
-from plan_automata import automata_based_plan_computation, compute_reach_F
+from plan_automata import (
+    automata_based_plan_computation,
+    compute_reach_F,
+    enumerate_valid_plans,
+)
 
 
 def _stats(nfa, **kwargs):
@@ -93,11 +97,24 @@ def test_budget_cap():
     return "PASS  DFA_P1 budget cap ⇒ inconclusive, not crash"
 
 
+def test_multi_character_actions_use_an_action_bound():
+    nfa_p2 = {
+        "initial": "s0",
+        "finals": {"s1"},
+        "transitions": {"s0": {"shoulder_down": {"s1"}}},
+    }
+
+    assert enumerate_valid_plans(nfa_p2, max_length=1) == {"shoulder_down"}
+    assert enumerate_valid_plans(nfa_p2, max_length=0) == set()
+    return "PASS  multi-character labels count as one action"
+
+
 if __name__ == "__main__":
     for t in (
         test_leak_counter_example,
         test_isolated_initial,
         test_paper_example_still_accepts_b,
         test_budget_cap,
+        test_multi_character_actions_use_an_action_bound,
     ):
         print(t())
