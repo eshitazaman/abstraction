@@ -607,16 +607,10 @@ def compact_plan_computation(
     enumerate_plans=True,
     max_length=10,
     verbose=True,
-    indexed_nfa=None,
-    representation="compact",
 ):
     """Run the complete bitmask pipeline and return native compact objects."""
 
-    dfa = (
-        build_compact_dfa_p1(nfa)
-        if indexed_nfa is None
-        else build_compact_dfa_p1_from_index(indexed_nfa)
-    )
+    dfa = build_compact_dfa_p1(nfa)
     product = build_compact_product(dfa)
     p2 = compute_compact_nfa_p2(product)
     shortest = shortest_accepting_word(p2)
@@ -643,7 +637,7 @@ def compact_plan_computation(
         "unreachable_product_states": product.state_count - p2.state_count,
         "short_circuit_reason": None,
         "inconclusive": False,
-        "representation": representation,
+        "representation": "compact",
     }
 
 

@@ -86,7 +86,6 @@ one by module name, without the `.py` suffix:
 python plan_automata.py --arm2d2-model 30d_goalMid_softBorder --exists-only
 python plan_automata.py --arm2d2-model 30d_goalMid_softBorder
 python plan_automata.py --arm2d2-model 30d_goalMid_softBorder --backend compact --exists-only
-python plan_automata.py --arm2d2-model 30d_goalMid_softBorder --backend compact-csr --exists-only
 ```
 
 See all currently available model names with:
@@ -107,11 +106,6 @@ The opt-in `--backend compact` path stores P1 beliefs and concrete product
 fibers as integer bitmasks. It computes the same P1/P2 language while avoiding
 the explicit backend's per-pair Python objects. The explicit backend remains
 the default while the compact implementation is evaluated across benchmarks.
-
-`--backend compact-csr` keeps those bitmask beliefs and fibers but stores the
-sparse NFA successor and predecessor relations in contiguous 32-bit CSR arrays.
-This avoids allocating a many-kilobyte global-position integer for every sparse
-transition involving a high-numbered state.
 
 ## `grid_world_nfa.py` — grid robot benchmarks
 

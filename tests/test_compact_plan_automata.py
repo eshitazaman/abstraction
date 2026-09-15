@@ -7,13 +7,11 @@ from automata.fa.nfa import NFA
 
 from compact_plan_automata import (
     build_compact_dfa_p1,
-    build_compact_dfa_p1_from_index,
     build_compact_product,
     compute_compact_nfa_p2,
     enumerate_valid_plans as enumerate_compact_plans,
     shortest_accepting_word,
 )
-from compact_csr_plan_automata import index_nfa_csr
 from plan_automata import (
     automata_based_plan_computation,
     build_product_nfa_dfa_p1,
@@ -79,16 +77,9 @@ class CompactPlannerParityTests(unittest.TestCase):
         compact_dfa = build_compact_dfa_p1(nfa)
         compact_product = build_compact_product(compact_dfa)
         compact_p2 = compute_compact_nfa_p2(compact_product)
-        csr_dfa = build_compact_dfa_p1_from_index(index_nfa_csr(nfa))
-        csr_product = build_compact_product(csr_dfa)
-        csr_p2 = compute_compact_nfa_p2(csr_product)
-
         self.assert_automata_equal(explicit_dfa, compact_dfa.materialize())
         self.assert_automata_equal(explicit_product, compact_product.materialize())
         self.assert_automata_equal(explicit_p2, compact_p2.materialize())
-        self.assert_automata_equal(explicit_dfa, csr_dfa.materialize())
-        self.assert_automata_equal(explicit_product, csr_product.materialize())
-        self.assert_automata_equal(explicit_p2, csr_p2.materialize())
         self.assertEqual(
             nfa_p2_language_nonempty(explicit_p2),
             compact_p2.language_nonempty,
@@ -96,10 +87,6 @@ class CompactPlannerParityTests(unittest.TestCase):
         self.assertEqual(
             enumerate_explicit_plans(explicit_p2, 4),
             enumerate_compact_plans(compact_p2, 4),
-        )
-        self.assertEqual(
-            enumerate_explicit_plans(explicit_p2, 4),
-            enumerate_compact_plans(csr_p2, 4),
         )
         shortest = shortest_accepting_word(compact_p2)
         self.assertEqual(
