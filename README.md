@@ -2,7 +2,7 @@
 
 This repository implements **automata-based plan synthesis**: build **DFA\(_{P1}\)** (P1-determinization), the product **NFA \(\times\) DFA\(_{P1}\)**, then **NFA\(_{P2}\)** by the iterative P2 restriction (**Lemma 9 / Algorithm 2** from the paper). Valid plans correspond to **L(NFA\(_{P2}\))**.
 
-Run all commands from the **repository root** so Python can resolve local modules (`plan_automata`, `plts_to_nfa`, `grid_world_nfa`).
+Run all commands from the **repository root** so Python can resolve local modules (`plan_automata`, `plts_to_nfa`, and the model packages).
 
 ## Requirements
 
@@ -74,18 +74,47 @@ from plan_automata import automata_based_plan_computation
 nfa = NFA(...)  # your model
 result = automata_based_plan_computation(nfa, verbose=True, enumerate_plans=True)
 # result["nfa_p2"], result["valid_plans"], result["language_nonempty"], ...
+
+from plan_automata import nfa_p2_to_regex
+regex = nfa_p2_to_regex(result["nfa_p2"])
+# Example readable result: b(ε + a)
+
+python_regex = nfa_p2_to_regex(result["nfa_p2"], syntax="python")
+# re.fullmatch(python_regex, plan_word) tests membership.
 ```
+
+Use `python plan_automata.py --example --regex` to print the expression built
+from the final automaton with Brzozowski's algebraic method (language equations
+solved using Arden's lemma). Readable notation uses `+` for choice,
+juxtaposition for sequence, `*` for repetition, `ε` for the empty word, and `∅`
+for no accepted words. Action labels with multiple characters or punctuation
+are quoted. Add `--regex-syntax python` for an expression usable with
+`re.fullmatch`; action labels are literal text. Printed plan words separate
+action labels with spaces. Extraction works with the explicit and compact
+backends. The compact backend feeds its bitmask transitions directly into
+extraction and skips states that cannot reach a final state. Algebraic
+elimination can still make the expression very large for large automata, so it
+is computed only when requested.
+
+To inspect the final NFA\(_{P2}\) directly, use `--automaton` instead of
+`--regex`:
+
+```bash
+python plan_automata.py --file example.kr --backend compact --automaton --exists-only
+```
+
+It prints the initial state, final states, and every labelled transition. The
+compact backend materializes its final automaton only for this listing.
 
 ### Run an Arm2D2 Python model
 
-Python model variants in `models/` are discovered automatically when they
-provide `build_arm2d2_nfa()` (or the older `build_agustin_nfa()` name). Run
-one by module name, without the `.py` suffix:
+Arm2D2 variants use the same `build_nfa()` interface as every other model.
+Run one by dotted path, without the `.py` suffix:
 
 ```bash
-python plan_automata.py --arm2d2-model 30d_goalMid_softBorder --exists-only
-python plan_automata.py --arm2d2-model 30d_goalMid_softBorder
-python plan_automata.py --arm2d2-model 30d_goalMid_softBorder --backend compact --exists-only
+python plan_automata.py --model arm2d2.r10_center_clamp --exists-only
+python plan_automata.py --model arm2d2.r10_center_clamp
+python plan_automata.py --model arm2d2.r10_center_clamp --backend compact --exists-only
 ```
 
 See all currently available model names with:
@@ -95,12 +124,65 @@ python plan_automata.py --help
 ```
 
 `--exists-only` avoids bounded plan enumeration, which is useful for larger
-Arm2D2 models. The `models/` directory is made import-compatible with the
-existing `arm2d2_models.common` imports used by the variants.
+Arm2D2 models. All Arm2D2 variants and their shared geometry/automaton builder
+live in `models/arm2d2/`.
+
+Use `--max-plan-length N` to set the maximum action count for bounded word
+enumeration. This does not truncate the constructed NFA_P2; it only controls
+which accepted words are printed.
+
+Arm2D2 module names use the schema
+`arm2d2.r<grid-resolution>_<goal>_<border>`, with `_short` and `_drift`
+reserved for the two explicitly nonstandard variants. Movement outcomes remain
+recorded in the parameter manifest, rather than duplicating them in filenames.
+The complete parameter manifest is in `models/arm2d2/model_manifest.json`.
+
+### Benchmark Arm2D2 variants
+
+Run every Arm2D2 model once and save the complete comparison table as a
+checkpointed CSV:
+
+```bash
+python3 scripts/tab_exp_arm2d2_benchmark.py
+python3 scripts/tab_exp_arm2d2_benchmark.py --csv results/arm2d2.csv
+python3 scripts/tab_exp_arm2d2_benchmark.py arm2d2.r10_center_clamp arm2d2.r10_center_block
+```
+
+The CSV has one model per row and records all NFA, DFA_P1, product, and NFA_P2
+counts alongside classification, shortest-plan length, runtime, and memory measurements. Each row is
+flushed and synced before the next model starts; rerunning the same command
+skips models already present in the checkpoint. Choose `--backend explicit` to
+use the explicit implementation; `compact` is the default.
+The center/right benchmark matrix contains 24 combinations: the four defined
+movement sets (6/9/12 through 20/30/40), two goal regions, and three border
+policies.
+
+### Run any Python model
+
+Every runnable model under `models/` can be passed by its dotted path relative
+to that directory:
+
+```bash
+python plan_automata.py --model benchmarks.boilerplate
+```
+
+For a new model, define a no-argument `build_nfa()` function that returns an
+`automata.fa.nfa.NFA`. This is the unified model interface; `--help` lists the
+available dotted paths. Use `--exists-only` for large models.
 
 The explicit backend in this repository can grow quickly. Add
 `--max-dfa-p1-states N` or `--max-product-states N` to stop safely with an
 inconclusive result rather than continuing past a chosen state budget.
+
+### Print regexes for all benchmark models
+
+Use the benchmark runner to compute the complete valid-plan regular expression
+for every model in `models/benchmarks/`:
+
+```bash
+.venv/bin/python scripts/benchmark_regexes.py
+.venv/bin/python scripts/benchmark_regexes.py --backend compact
+```
 
 The opt-in `--backend compact` path stores P1 beliefs and concrete product
 fibers as integer bitmasks. It computes the same P1/P2 language while avoiding
@@ -114,20 +196,20 @@ Builds an NFA for an \(n \times n\) grid (robot at bottom-left style coordinates
 ### Basic run (default \(4\times4\), goal top-right, `se-corners` actions)
 
 ```bash
-python grid_world_nfa.py
+python -m models.grid_world.grid_world_nfa
 ```
 
 ### Grid size, start, goal, obstacles
 
 ```bash
-python grid_world_nfa.py -n 5 --robot-start 1,1 --goal 5,5 \
+python -m models.grid_world.grid_world_nfa -n 5 --robot-start 1,1 --goal 5,5 \
   --obstacles "2,2;3,1"
 ```
 
 Multiple goals (semicolon-separated):
 
 ```bash
-python grid_world_nfa.py -n 6 --goal "5,5;6,6"
+python -m models.grid_world.grid_world_nfa -n 6 --goal "5,5;6,6"
 ```
 
 ### Action semantics (`--action-mode`)
@@ -139,8 +221,8 @@ python grid_world_nfa.py -n 6 --goal "5,5;6,6"
 | `cardinal` | Deterministic **U** / **D** / **L** / **R** moves. |
 
 ```bash
-python grid_world_nfa.py -n 4 --action-mode north-bias
-python grid_world_nfa.py -n 4 --action-mode cardinal
+python -m models.grid_world.grid_world_nfa -n 4 --action-mode north-bias
+python -m models.grid_world.grid_world_nfa -n 4 --action-mode cardinal
 ```
 
 ### Faster: only check if *some* valid plan exists
@@ -148,32 +230,32 @@ python grid_world_nfa.py -n 4 --action-mode cardinal
 Skips enumerating all words up to the default cap (much faster on large products).
 
 ```bash
-python grid_world_nfa.py -n 5 --exists-only
+python models/grid_world/grid_world_nfa.py -n 5 --exists-only
 ```
 
 ### Build and inspect NP2 only (optional DFA\(_{P1}\) dump / PRISM)
 
 ```bash
-python grid_world_nfa.py -n 4 --np2-only
+python models/grid_world/grid_world_nfa.py -n 4 --np2-only
 ```
 
 Dump DFA\(_{P1}\) transitions (can be huge) or write them to a file:
 
 ```bash
-python grid_world_nfa.py -n 4 --np2-only --list-dfa-p1-transitions --dfa-p1-max-lines 50
-python grid_world_nfa.py -n 5 --np2-only --dfa-p1-out dfa_p1.txt
+python models/grid_world/grid_world_nfa.py -n 4 --np2-only --list-dfa-p1-transitions --dfa-p1-max-lines 50
+python models/grid_world/grid_world_nfa.py -n 5 --np2-only --dfa-p1-out dfa_p1.txt
 ```
 
 Export NFA\(_{P2}\) as a PRISM dtmc (uniform resolution of nondeterminism per state/action):
 
 ```bash
-python grid_world_nfa.py -n 4 --np2-only --prism-out robot.prism
+python models/grid_world/grid_world_nfa.py -n 4 --np2-only --prism-out robot.prism
 ```
 
 ### Random obstacles (reproducible with `--seed`)
 
 ```bash
-python grid_world_nfa.py -n 5 --random-obstacles 8 --seed 42
+python models/grid_world/grid_world_nfa.py -n 5 --random-obstacles 8 --seed 42
 ```
 
 ### Dead-cell diagnostic
@@ -181,7 +263,7 @@ python grid_world_nfa.py -n 5 --random-obstacles 8 --seed 42
 Prints cells where an action has no legal successor (often correlates with empty **L(NFA\(_{P2}\))**):
 
 ```bash
-python grid_world_nfa.py -n 5 --check-dead-cells --obstacles "2,2;3,3"
+python models/grid_world/grid_world_nfa.py -n 5 --check-dead-cells --obstacles "2,2;3,3"
 ```
 
 ### End of `grid_world_nfa.py` entry point
@@ -189,7 +271,7 @@ python grid_world_nfa.py -n 5 --check-dead-cells --obstacles "2,2;3,3"
 The script calls `main()` only when executed as `__main__`:
 
 ```bash
-python grid_world_nfa.py [options]
+python models/grid_world/grid_world_nfa.py [options]
 ```
 
 ## FOND / IPPC chain examples (lemma pipeline)
@@ -203,7 +285,7 @@ The lemma-based algorithm is always `automata_based_plan_computation` in `plan_a
 From the repo root (activate `.venv` if you use one):
 
 ```python
-from tireworld import build_tireworld_nfa
+from models.fond.tireworld import build_tireworld_nfa
 from plan_automata import automata_based_plan_computation
 
 nfa = build_tireworld_nfa(5)  # N = number of cities
@@ -214,9 +296,9 @@ print(result["language_nonempty"], result["shortest_plan_length"])  # True, 8
 Same pipeline, other domains (`N` is chain length: beam positions, rooms, or fire sites):
 
 ```python
-from beam_walk import build_beam_walk_nfa
-from doors import build_doors_nfa
-from first_responders import build_first_responders_nfa
+from models.fond.beam_walk import build_beam_walk_nfa
+from models.fond.doors import build_doors_nfa
+from models.fond.first_responders import build_first_responders_nfa
 
 nfa = build_beam_walk_nfa(5)           # k* = 12
 # nfa = build_doors_nfa(5)
@@ -238,7 +320,7 @@ result = automata_based_plan_on_the_fly(nfa, verbose=True, enumerate_plans=False
 | Doors | `build_doors_nfa(N)` | \(3N-3 = 12\) |
 | First-responders | `build_first_responders_nfa(N)` | \(3N-3 = 12\) |
 
-`python tireworld.py --n 5` only **prints NFA sizes**; it does not run DFA\(_{P_1}\) / NFA\(_{P_2}\).
+`python models/fond/tireworld.py --n 5` only **prints NFA sizes**; it does not run DFA\(_{P_1}\) / NFA\(_{P_2}\).
 
 ### Scaling sweeps
 
@@ -269,8 +351,22 @@ python nfa_p2_to_prism.py -n 4 --robot-start 1,1 --obstacles "2,2" -o out.prism
 Experiment driver for grid statistics (see script help):
 
 ```bash
-python scripts/tab_exp_grid_abs_benchmark.py --help
+python scripts/tab_exp_grid_abs_benchmark.py
+python scripts/tab_exp_grid_abs_benchmark.py --only-n 5 --json-out grid_results.json
+python scripts/tab_exp_grid_abs_benchmark.py --model se-corners --only-n 5
+python scripts/tab_exp_grid_abs_benchmark.py --p2 --only-n 5
+python scripts/tab_exp_grid_abs_benchmark.py --p2 --shortest-plan --only-n 5
 ```
+
+The default `north-bias` model and seed 42 reproduce the random-obstacle
+rows in Table 1. Choose another action model with `--model` (listed by
+`--help`) and a single size with `--only-n`. Pass `--random-seed` for a fresh
+layout seed; the printed seed can be reused with `--seed`. The default reports
+NFA and DFA_P1 counts. Add `--p2` to run the full pipeline; Grid 10 and above can
+require substantial time and memory because P1 subset construction can grow
+to millions of states. P2 runs report plan existence only; add
+`--shortest-plan` to also calculate and print the shortest length and one
+shortest action sequence. All reported fields can be written with `--json-out`.
 
 ## Troubleshooting
 
