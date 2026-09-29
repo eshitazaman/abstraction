@@ -420,6 +420,24 @@
         90,
         0
       ]
+    },
+    {
+      "id": "one_joint",
+      "joint_count": 1,
+      "arm_segment_lengths": [
+        2.0
+      ],
+      "resolution_deg": 10,
+      "goal": "right",
+      "border_mode": "clamp",
+      "move_outcomes_deg": [
+        20,
+        30,
+        40
+      ],
+      "initial_state": [
+        90
+      ]
     }
   ]
 }
