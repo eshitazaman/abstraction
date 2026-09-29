@@ -146,6 +146,12 @@ def build_nfa_with_stats():
     return nfa, stats
 
 
+def build_nfa() -> NFA:
+    """Build the reachable-state PLTS example for the unified model runner."""
+
+    return build_nfa_reachable_only()
+
+
 if __name__ == "__main__":
     # Build NFA with timing
     nfa, stats = build_nfa_with_stats()

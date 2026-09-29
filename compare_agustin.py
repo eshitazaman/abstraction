@@ -14,10 +14,10 @@ We time each and cross-check that all three agree on:
 import argparse
 from time import perf_counter
 
-from arm2d2_agustin import build_agustin_nfa
 from plan_automata import (
     automata_based_plan_computation,
     automata_based_plan_on_the_fly,
+    load_model,
 )
 
 
@@ -73,7 +73,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    nfa = build_agustin_nfa()
+    nfa = load_model("arm2d2.r10_center_clamp")
     n_trans = sum(
         len(s)
         for t in nfa.transitions.values()

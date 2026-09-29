@@ -215,7 +215,7 @@ def _build_grid_nfa_p2(
     goal: Union[Tuple[int, int], Set[Tuple[int, int]]],
     obstacles: Set[Tuple[int, int]],
 ):
-    from grid_world_nfa import generate_grid_world_nfa
+    from models.grid_world.grid_world_nfa import generate_grid_world_nfa
     from plan_automata import build_np2_automaton
 
     nfa, _ = generate_grid_world_nfa(
@@ -251,7 +251,7 @@ def main() -> None:
     if args.grid_size is None:
         parser.error("provide -n / --grid-size to build the grid world and export")
 
-    from grid_world_nfa import parse_obstacle_list
+    from models.grid_world.grid_world_nfa import parse_obstacle_list
 
     rs = tuple(map(int, args.robot_start.split(",")))
     g = args.goal

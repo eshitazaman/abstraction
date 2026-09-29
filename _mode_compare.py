@@ -1,6 +1,6 @@
 """Side-by-side comparison of action_mode={se-corners, north-bias} on empty grids."""
 
-from grid_world_nfa import generate_grid_world_nfa
+from models.grid_world.grid_world_nfa import generate_grid_world_nfa
 from plan_automata import automata_based_plan_computation
 
 

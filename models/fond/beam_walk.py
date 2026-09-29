@@ -79,3 +79,9 @@ def build_beam_walk_nfa(num_positions):
 
 def expected_shortest_plan_length(num_positions):
     return 3 * num_positions - 3
+
+
+def build_nfa() -> NFA:
+    """Build the default five-position beam-walk benchmark."""
+
+    return build_beam_walk_nfa(5)

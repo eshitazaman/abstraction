@@ -305,6 +305,12 @@ def generate_grid_world_nfa(
     return nfa, stats
 
 
+def build_nfa() -> NFA:
+    """Build the default grid-world benchmark for the unified model runner."""
+
+    return generate_grid_world_nfa(verbose=False)[0]
+
+
 def sample_random_obstacles(
     n: int,
     m: int,

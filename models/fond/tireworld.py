@@ -125,6 +125,12 @@ def expected_shortest_plan_length(num_cities):
     return 2 * num_cities - 2
 
 
+def build_nfa() -> NFA:
+    """Build the default five-city Tireworld benchmark."""
+
+    return build_tireworld_nfa(5)
+
+
 if __name__ == "__main__":
     import argparse
 

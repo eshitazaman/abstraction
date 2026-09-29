@@ -90,3 +90,9 @@ def build_first_responders_nfa(num_sites):
 
 def expected_shortest_plan_length(num_sites):
     return 3 * num_sites - 3
+
+
+def build_nfa() -> NFA:
+    """Build the default five-site first-responders benchmark."""
+
+    return build_first_responders_nfa(5)

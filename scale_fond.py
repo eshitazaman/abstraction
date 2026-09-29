@@ -10,19 +10,19 @@ import csv
 import os
 from time import perf_counter
 
-from beam_walk import (
+from models.fond.beam_walk import (
     build_beam_walk_nfa,
     expected_shortest_plan_length as beam_k,
 )
-from doors import (
+from models.fond.doors import (
     build_doors_nfa,
     expected_shortest_plan_length as doors_k,
 )
-from first_responders import (
+from models.fond.first_responders import (
     build_first_responders_nfa,
     expected_shortest_plan_length as fr_k,
 )
-from tireworld import (
+from models.fond.tireworld import (
     build_tireworld_nfa,
     expected_shortest_plan_length as tw_k,
 )

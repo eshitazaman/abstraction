@@ -20,7 +20,7 @@ from plan_automata import (
     nfa_p2_language_nonempty,
     nfa_p2_shortest_accepting_length,
     nfa_to_dfa_p1,
-    load_arm2d2_model,
+    load_model,
 )
 
 
@@ -76,6 +76,7 @@ class CompactPlannerParityTests(unittest.TestCase):
 
         compact_dfa = build_compact_dfa_p1(nfa)
         compact_product = build_compact_product(compact_dfa)
+        self.assertEqual(compact_product.reachable, compact_dfa.beliefs)
         compact_p2 = compute_compact_nfa_p2(compact_product)
         self.assert_automata_equal(explicit_dfa, compact_dfa.materialize())
         self.assert_automata_equal(explicit_product, compact_product.materialize())
@@ -121,7 +122,7 @@ class CompactPlannerParityTests(unittest.TestCase):
             self.assertEqual(explicit["stats"][metric], compact["stats"][metric])
 
     def test_action_border_model_matches_explicit_backend(self):
-        nfa = load_arm2d2_model("30d_goalRight_actionBorder")
+        nfa = load_model("arm2d2.r10_right_action")
         explicit = automata_based_plan_computation(
             nfa, verbose=False, enumerate_plans=False
         )
@@ -134,6 +135,28 @@ class CompactPlannerParityTests(unittest.TestCase):
             {key: explicit["stats"][key] for key in shared_metrics},
             {key: compact["stats"][key] for key in shared_metrics},
         )
+
+    def test_plan_enumeration_bound_is_shared_by_backends(self):
+        nfa = NFA(
+            states={"start", "final"},
+            input_symbols={"a", "b"},
+            transitions={
+                "start": {"a": {"start"}, "b": {"final"}},
+                "final": {},
+            },
+            initial_state="start",
+            final_states={"final"},
+        )
+        for backend in ("explicit", "compact"):
+            with self.subTest(backend=backend):
+                result = automata_based_plan_computation(
+                    nfa,
+                    verbose=False,
+                    backend=backend,
+                    max_plan_length=2,
+                )
+                self.assertEqual(result["valid_plans"], {"b", "a b"})
+                self.assertEqual(result["plan_enumeration_max_length"], 2)
 
 
 if __name__ == "__main__":

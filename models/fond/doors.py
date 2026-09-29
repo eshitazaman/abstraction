@@ -83,3 +83,9 @@ def build_doors_nfa(num_rooms):
 
 def expected_shortest_plan_length(num_rooms):
     return 3 * num_rooms - 3
+
+
+def build_nfa() -> NFA:
+    """Build the default five-room doors benchmark."""
+
+    return build_doors_nfa(5)

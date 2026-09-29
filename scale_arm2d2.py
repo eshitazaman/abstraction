@@ -17,14 +17,41 @@ Usage
 
 import argparse
 import csv
+from dataclasses import replace
 import sys
 from time import perf_counter
 
-from arm2d2_agustin import build_agustin_nfa, _grid_step, _legs
+from models.arm2d2.common import build_joint_nfa
+from models.arm2d2.standard_variants import standard_parameters
 from plan_automata import (
     automata_based_plan_computation,
     automata_based_plan_on_the_fly,
 )
+
+BASE_MODEL = standard_parameters("r10", "center", "clamp")
+
+
+def _grid_step(scale):
+    return BASE_MODEL.angle_increment_degrees / scale
+
+
+def _legs(scale):
+    return tuple(move / scale for move in (20, 40))
+
+
+def build_scaled_nfa(scale=1):
+    """Build a scaled version of the standard 30° centred-goal model."""
+
+    if scale <= 0:
+        raise ValueError("scale must be positive")
+    model = replace(
+        BASE_MODEL,
+        angle_increment_degrees=max(1, round(BASE_MODEL.angle_increment_degrees / scale)),
+        move_outcomes_degrees=tuple(
+            max(1, round(move / scale)) for move in BASE_MODEL.move_outcomes_degrees
+        ),
+    )
+    return build_joint_nfa(model)
 
 
 VARIANTS = {
@@ -48,7 +75,7 @@ def _nfa_transitions(nfa):
 def run_one(scale, variant, budget_dfa_p1, budget_product, verbose):
     label, runner = VARIANTS[variant]
 
-    nfa = build_agustin_nfa(scale=scale)
+    nfa = build_scaled_nfa(scale=scale)
     step = _grid_step(scale)
     ls, ll = _legs(scale)
     n_trans = _nfa_transitions(nfa)

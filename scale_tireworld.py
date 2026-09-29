@@ -13,7 +13,7 @@ import csv
 import os
 from time import perf_counter
 
-from tireworld import build_tireworld_nfa, expected_shortest_plan_length
+from models.fond.tireworld import build_tireworld_nfa, expected_shortest_plan_length
 from plan_automata import (
     automata_based_plan_computation,
     automata_based_plan_on_the_fly,

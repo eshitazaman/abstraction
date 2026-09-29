@@ -16,6 +16,7 @@ from automata.fa.nfa import NFA
 from plan_automata import (
     automata_based_plan_computation,
     automata_based_plan_on_the_fly,
+    load_model,
 )
 
 
@@ -37,11 +38,9 @@ def build_paper_example():
 
 def build_instance(kind):
     if kind == "small":
-        from arm2d2_small_plan import build_nfa
-        return build_nfa(), "small Arm2D2 (169 states, expects non-empty)"
+        return load_model("arm2d2.r1_center_clamp"), "5° Arm2D2 joint model"
     if kind == "full":
-        from arm2d2_plan import build_arm2d2_nfa
-        return build_arm2d2_nfa(), "full Arm2D2 (1813 states, expects empty)"
+        return load_model("arm2d2.r10_center_clamp"), "30° Arm2D2 joint model"
     if kind == "paper":
         return build_paper_example(), "paper example (4 states, non-empty)"
     raise ValueError(f"unknown instance kind: {kind}")
