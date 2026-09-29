@@ -20,26 +20,25 @@ from automata.fa.nfa import NFA
 from plts_to_nfa import build_nfa_from_file
 
 
-def arm2d2_models_directory():
-    """Return the repository directory containing Arm2D2 model modules."""
+def models_directory():
+    """Return the root directory containing runnable Python model modules."""
 
     return Path(__file__).resolve().with_name("models")
 
 
-def discover_arm2d2_models(models_dir=None):
-    """Return runnable Arm2D2 model names from ``models/``.
+def discover_models(models_dir=None):
+    """Return dotted names of runnable model modules below ``models/``.
 
-    A model is discoverable when its top-level module exposes either
-    ``build_arm2d2_nfa`` or the older ``build_agustin_nfa`` compatibility
-    function. Supporting modules such as ``common.py`` are ignored.
+    Models must expose a no-argument ``build_nfa()`` function that returns an
+    :class:`automata.fa.nfa.NFA`.
     """
 
-    directory = Path(models_dir) if models_dir is not None else arm2d2_models_directory()
+    directory = Path(models_dir) if models_dir is not None else models_directory()
     if not directory.is_dir():
         return ()
 
     names = []
-    for path in directory.glob("*.py"):
+    for path in directory.rglob("*.py"):
         if path.name == "__init__.py":
             continue
         try:
@@ -51,25 +50,25 @@ def discover_arm2d2_models(models_dir=None):
             for node in module.body
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
         }
-        if {"build_arm2d2_nfa", "build_agustin_nfa"} & functions:
-            names.append(path.stem)
+        if "build_nfa" in functions:
+            relative = path.relative_to(directory).with_suffix("")
+            names.append(".".join(relative.parts))
     return tuple(sorted(names))
 
 
-def load_arm2d2_model(model_name):
-    """Build and return an NFA from a discovered ``models/<name>.py`` module."""
+def load_model(model_name):
+    """Build an NFA from a dotted name returned by :func:`discover_models`."""
 
-    if model_name not in discover_arm2d2_models():
-        available = ", ".join(discover_arm2d2_models()) or "none"
-        raise ValueError(
-            f"unknown Arm2D2 model {model_name!r}; available models: {available}"
-        )
+    available_models = discover_models()
+    if model_name not in available_models:
+        available = ", ".join(available_models) or "none"
+        raise ValueError(f"unknown model {model_name!r}; available models: {available}")
 
-    module = import_module(f"arm2d2_models.{model_name}")
-    builder = getattr(module, "build_arm2d2_nfa", None)
-    if builder is None:
-        builder = getattr(module, "build_agustin_nfa")
-    return builder()
+    module = import_module(f"models.{model_name}")
+    nfa = module.build_nfa()
+    if not isinstance(nfa, NFA):
+        raise TypeError(f"models.{model_name}.build_nfa() must return an NFA")
+    return nfa
 
 
 class BudgetExhausted(Exception):
@@ -496,13 +495,8 @@ def compute_nfa_p2(product_nfa, verbose=False):
     """
     Compute NFA_P2: the maximal P2-restriction of the product NFA × DFA_P1.
 
-    Implements Lemma 9 / Algorithm 2 (iterative transition removal): alternate
-    backward reachability to finals, greatest-fixpoint validity (non-final states
-    need some action whose successors are all valid), then drop violating
-    (state, action) pairs until stable.
-
-    Uses a GREATEST fixpoint so self-loops are valid only when a path to finals
-    still exists.
+    Algorithm 2 repeatedly removes every transition into the belief-state
+    closure of reachable product states that cannot reach a final state.
 
     Returns:
         dict with 'states', 'initial', 'finals', 'transitions', 'input_symbols',
@@ -521,97 +515,52 @@ def compute_nfa_p2(product_nfa, verbose=False):
             transitions[s][a] = set(succs)
     
     iteration = 0
-    changed = True
-    
-    while changed:
+    while True:
         iteration += 1
-        changed = False
         if verbose and (iteration <= 30 or iteration % 50 == 0):
             print(
                 f"   ... NFA_P2: outer iteration {iteration} "
                 f"(states in working graph ≈ {len(states)})"
             )
 
-        # Step 1: Compute states that can reach finals (backward reachability)
+        predecessors = {}
+        for source, action_map in transitions.items():
+            for successors in action_map.values():
+                for target in successors:
+                    predecessors.setdefault(target, set()).add(source)
         can_reach_final = set(finals)
-        inner_changed = True
-        while inner_changed:
-            inner_changed = False
-            for s in states:
-                if s in can_reach_final:
-                    continue
-                if s in transitions:
-                    for a, succs in transitions[s].items():
-                        if succs & can_reach_final:
-                            can_reach_final.add(s)
-                            inner_changed = True
-                            break
-        
-        # Step 2: Use GREATEST fixpoint to compute valid states
-        valid_states = set(can_reach_final)
-        inner_changed = True
-        while inner_changed:
-            inner_changed = False
-            to_remove = set()
-            for s in valid_states:
-                if s in finals:
-                    continue
-                has_valid_action = False
-                if s in transitions:
-                    for a, succs in transitions[s].items():
-                        if succs and all(succ in valid_states for succ in succs):
-                            has_valid_action = True
-                            break
-                if not has_valid_action:
-                    to_remove.add(s)
-            if to_remove:
-                valid_states -= to_remove
-                inner_changed = True
-        
-        # Invalid states
-        invalid_states = states - valid_states
-        
-        if not invalid_states:
-            break  # All remaining states are valid
-        
-        # Step 3: Remove only product transitions that violate P2 *locally*.
-        #
-        # P2 is universal over nondeterministic successors at each product state (s, ŝ):
-        # symbol a may stay only if every a-successor lies in valid_states. Grouping by
-        # DFA macro-state and banning an action for *all* pairs (s', ŝ) in that class
-        # is unsound: different s' can legitimately keep different letters under the
-        # same ŝ. Build closure as explicit (state, action) pairs.
-        closure = set()
-        for s in states:
-            if s not in transitions:
-                continue
-            for a, succs in transitions[s].items():
-                if not succs or not all(succ in valid_states for succ in succs):
-                    closure.add((s, a))
-        
-        # Step 4: Remove transitions δ_{i+1} = δ_i \ closure
-        for s, a in closure:
-            if s in transitions and a in transitions[s]:
-                del transitions[s][a]
-                changed = True
-        
-        # Clean up empty transition dictionaries
-        transitions = {s: t for s, t in transitions.items() if t}
-        
-        # Update reachable states (remove unreachable states)
-        if initial:
-            reachable = {initial}
-            worklist = deque([initial])
-            while worklist:
-                state = worklist.popleft()
-                if state in transitions:
-                    for a, succs in transitions[state].items():
-                        for succ in succs:
-                            if succ not in reachable:
-                                reachable.add(succ)
-                                worklist.append(succ)
-            states = reachable
-            finals = finals & reachable
+        worklist = deque(finals)
+        while worklist:
+            for source in predecessors.get(worklist.popleft(), ()):
+                if source not in can_reach_final:
+                    can_reach_final.add(source)
+                    worklist.append(source)
+
+        # A reachable dead state invalidates its entire DFA belief fiber:
+        # every product state with that second component shares its histories.
+        dead_beliefs = {state[1] for state in states - can_reach_final}
+        changed = False
+        for source, action_map in transitions.items():
+            for action, successors in list(action_map.items()):
+                kept = {target for target in successors if target[1] not in dead_beliefs}
+                if kept != successors:
+                    changed = True
+                    if kept:
+                        action_map[action] = kept
+                    else:
+                        del action_map[action]
+        if not changed:
+            break
+
+        states = {initial}
+        worklist = deque([initial])
+        while worklist:
+            for successors in transitions.get(worklist.popleft(), {}).values():
+                for target in successors:
+                    if target not in states:
+                        states.add(target)
+                        worklist.append(target)
+        finals &= states
     
     # Final result
     if not initial or initial not in states:
@@ -628,7 +577,10 @@ def compute_nfa_p2(product_nfa, verbose=False):
     final_transitions = {}
     for s in states:
         if s in transitions:
-            final_transitions[s] = {a: list(succs) for a, succs in transitions[s].items()}
+            final_transitions[s] = {
+                a: list(succs & states)
+                for a, succs in transitions[s].items() if succs & states
+            }
     
     return {
         'states': states,
@@ -640,13 +592,13 @@ def compute_nfa_p2(product_nfa, verbose=False):
     }
 
 
-def enumerate_valid_plans(nfa_p2, max_length=10):
+def enumerate_valid_plans(nfa_p2, max_length=20):
     """
     Enumerate accepted plans containing at most ``max_length`` actions.
 
-    Plan words are stored as concatenated strings for compatibility, but action
-    labels may contain multiple characters (for example, ``shoulder_down``).
-    The bound must therefore be tracked separately from ``len(word)``.
+    Plan words are rendered with a space between action labels. Labels may
+    contain multiple characters (for example, ``shoulder_down``), so the bound
+    is tracked separately from the rendered string length.
     """
     if nfa_p2['initial'] is None:
         return set()
@@ -655,18 +607,195 @@ def enumerate_valid_plans(nfa_p2, max_length=10):
     
     valid_words = set()
     
-    def dfs(state, word, action_count):
+    def dfs(state, actions, action_count):
         if action_count > max_length:
             return
         if state in nfa_p2['finals']:
-            valid_words.add(word)
+            valid_words.add(" ".join(actions))
         if state in nfa_p2['transitions']:
             for symbol, successors in nfa_p2['transitions'][state].items():
                 for succ in successors:
-                    dfs(succ, word + symbol, action_count + 1)
+                    dfs(succ, actions + (symbol,), action_count + 1)
     
-    dfs(nfa_p2['initial'], "", 0)
+    dfs(nfa_p2['initial'], (), 0)
     return valid_words
+
+
+def nfa_p2_to_regex(nfa_p2, *, syntax='readable'):
+    """Return a regular expression for the complete language of NFA_P2.
+
+    ``readable`` uses +, concatenation, *, ε and ∅, with quoted multi-character
+    labels.
+    ``python`` returns an expression suitable for ``re.fullmatch`` on
+    concatenated action labels.  The expression is obtained with Brzozowski's
+    algebraic method: one language equation is built per state and the equations
+    are solved using Arden's lemma.  Extraction may grow exponentially.
+    """
+    import re
+
+    from compact_plan_automata import CompactP2, MISSING, iter_bits
+    if syntax not in {'readable', 'python'}:
+        raise ValueError("syntax must be 'readable' or 'python'")
+
+    empty = '∅' if syntax == 'readable' else '(?!)'
+    epsilon = 'ε' if syntax == 'readable' else ''
+
+    def action_expr(action):
+        if syntax == 'python':
+            return (re.escape(action), 4) if action else ('', 4)
+        if not action:
+            return ('ε', 4)
+        if len(action) == 1 and action.isalnum():
+            return (action, 4)
+        return (repr(action), 4)
+
+    # Expressions are (text, precedence): union=1, concatenation=2, star=3,
+    # atom=4. None is the empty language; '' is epsilon.
+    def wrap(expr, minimum):
+        if expr[1] >= minimum:
+            return expr[0]
+        if syntax == 'readable':
+            return f'({expr[0]})'
+        return f'(?:{expr[0]})'
+
+    def union(left, right):
+        if left is None:
+            return right
+        if right is None or left == right:
+            return left
+        separator = ' + ' if syntax == 'readable' else '|'
+        return (f'{wrap(left, 2)}{separator}{wrap(right, 2)}', 1)
+
+    def concat(left, right):
+        if left is None or right is None:
+            return None
+        if left[0] == epsilon:
+            return right
+        if right[0] == epsilon:
+            return left
+        separator = ''
+        return (wrap(left, 2) + separator + wrap(right, 2), 2)
+
+    def star(expr):
+        if expr is None or expr[0] == epsilon:
+            return (epsilon, 4)
+        if syntax == 'readable':
+            return (wrap(expr, 3) + '*', 3)
+        return ('(?:' + expr[0] + ')*', 3)
+
+    # Each state q denotes the language accepted starting at q and has the
+    # characteristic equation
+    #
+    #     X_q = (ε if q is final) + Σ action(q, r) X_r.
+    #
+    # Brzozowski's algebraic method eliminates variables from this system and
+    # uses Arden's lemma to remove a variable's self-reference.  ``coeffs[q]``
+    # stores the variable coefficients in q's equation; ``constants[q]`` stores
+    # its variable-free term.
+    coeffs = {}
+    constants = {}
+
+    def add_coefficient(source, target, expr):
+        equation = coeffs.setdefault(source, {})
+        equation[target] = union(equation.get(target), expr)
+
+    if isinstance(nfa_p2, CompactP2):
+        if not nfa_p2.language_nonempty:
+            return empty
+        dfa = nfa_p2.dfa
+        # Use integer pair IDs directly. Only states that can reach a final
+        # state can contribute to the expression; no decoded product is built.
+        useful = tuple(reachable & coreachable for reachable, coreachable
+                       in zip(nfa_p2.reachable, nfa_p2.coreachable))
+        states = {(belief, state) for belief, mask in enumerate(useful)
+                  for state in iter_bits(mask)}
+        initial = (dfa.initial, dfa.nfa.initial)
+        finals = {(belief, state) for belief in dfa.finals
+                  for state in iter_bits(useful[belief])}
+        for belief, mask in enumerate(useful):
+            for action, target_belief in enumerate(dfa.transitions[belief]):
+                if target_belief == MISSING:
+                    continue
+                sources = mask & nfa_p2.allowed[belief][action]
+                literal = action_expr(dfa.nfa.actions[action])
+                for source in iter_bits(sources):
+                    targets = (dfa.nfa.successor_mask(source, action)
+                               & useful[target_belief])
+                    for target in iter_bits(targets):
+                        add_coefficient(
+                            (belief, source), (target_belief, target), literal,
+                        )
+    else:
+        initial = nfa_p2.get('initial')
+        finals = nfa_p2.get('finals', set())
+        if initial is None or not finals:
+            return empty
+        states = set(nfa_p2.get('states', ())) | {initial} | set(finals)
+        for source, actions in nfa_p2.get('transitions', {}).items():
+            states.add(source)
+            for successors in actions.values():
+                states.update(successors)
+        for source, actions in nfa_p2.get('transitions', {}).items():
+            for action, successors in actions.items():
+                literal = action_expr(action)
+                for target in successors:
+                    add_coefficient(source, target, literal)
+
+    for state in states:
+        coeffs.setdefault(state, {})
+        constants[state] = (epsilon, 4) if state in finals else None
+
+    # Keep the initial variable until last.  For an eliminated variable k,
+    # Arden's lemma changes X_k = A X_k + B into X_k = A* B; substituting that
+    # expression into every remaining equation is analogous to Gaussian
+    # elimination over the regular-language semiring.
+    for state in sorted(states - {initial}, key=str):
+        equation = coeffs[state]
+        loop = star(equation.pop(state, None))
+        solved_coefficients = {
+            target: concat(loop, expr) for target, expr in equation.items()
+        }
+        solved_constant = concat(loop, constants[state])
+
+        for source in states:
+            if source == state:
+                continue
+            multiplier = coeffs[source].pop(state, None)
+            if multiplier is None:
+                continue
+            for target, expr in solved_coefficients.items():
+                coeffs[source][target] = union(
+                    coeffs[source].get(target), concat(multiplier, expr),
+                )
+            constants[source] = union(
+                constants[source], concat(multiplier, solved_constant),
+            )
+
+    # The sole remaining variable can only refer to itself.  One final use of
+    # Arden's lemma yields the language of the initial state.
+    result = concat(star(coeffs[initial].get(initial)), constants[initial])
+    return result[0] if result is not None else empty
+
+
+def format_nfa_p2(nfa_p2):
+    """Return a stable, human-readable listing of the final NFA_P2 automaton.
+
+    Compact backends materialize only when this complete listing is requested.
+    """
+    if not isinstance(nfa_p2, dict):
+        nfa_p2 = nfa_p2.materialize()
+
+    initial = nfa_p2.get('initial')
+    finals = nfa_p2.get('finals', set())
+    transitions = nfa_p2.get('transitions', {})
+    lines = ['FINAL NFA_P2', f'Initial: {initial!r}', 'Final states:']
+    lines.extend(f'  {state!r}' for state in sorted(finals, key=str))
+    lines.append('Transitions:')
+    for source in sorted(transitions, key=str):
+        for action, successors in sorted(transitions[source].items(), key=lambda item: str(item[0])):
+            for target in sorted(successors, key=str):
+                lines.append(f'  {source!r} --{action!r}--> {target!r}')
+    return '\n'.join(lines)
 
 
 def nfa_p2_language_nonempty(nfa_p2):
@@ -814,6 +943,8 @@ def automata_based_plan_computation(
     max_product_states=None,
     short_circuit=True,
     backend="explicit",
+    compute_shortest_plan=False,
+    max_plan_length=None,
 ):
     """
     Computes all valid plans using the automata-based approach:
@@ -837,6 +968,10 @@ def automata_based_plan_computation(
         max_product_states: Analogous cap on the product construction.
         backend: ``"explicit"`` (default) or ``"compact"`` bitmask transitions.
             State budgets apply only to the explicit backend.
+        compute_shortest_plan: If False, stop after deciding whether the P2
+            language is non-empty instead of calculating a shortest plan.
+        max_plan_length: Maximum number of actions in enumerated words. If
+            omitted, the backend default is used (20 explicit, 10 compact).
 
     Returns:
         Dictionary containing:
@@ -849,6 +984,9 @@ def automata_based_plan_computation(
         - 'short_circuit_reason': Explanation string when we bailed early
         - 'inconclusive': True iff we bailed out due to a budget cap
     """
+    if max_plan_length is not None and max_plan_length < 0:
+        raise ValueError("max_plan_length must be non-negative")
+
     if backend == "compact":
         if max_dfa_p1_states is not None or max_product_states is not None:
             raise ValueError(
@@ -856,10 +994,15 @@ def automata_based_plan_computation(
             )
         from compact_plan_automata import compact_plan_computation
 
+        compact_kwargs = {}
+        if max_plan_length is not None:
+            compact_kwargs["max_length"] = max_plan_length
         return compact_plan_computation(
             nfa,
             enumerate_plans=enumerate_plans,
             verbose=verbose,
+            compute_shortest_plan=compute_shortest_plan,
+            **compact_kwargs,
         )
     if backend != "explicit":
         raise ValueError("backend must be 'explicit' or 'compact'")
@@ -1006,13 +1149,17 @@ def automata_based_plan_computation(
             print("   No valid plans exist!")
     
     language_nonempty = nfa_p2_language_nonempty(nfa_p2)
-    shortest_plan_length = nfa_p2_shortest_accepting_length(nfa_p2)
+    shortest_plan_length = (
+        nfa_p2_shortest_accepting_length(nfa_p2)
+        if compute_shortest_plan else None
+    )
 
     # Step 4: Enumerate valid plans (optional)
     if enumerate_plans:
         if verbose:
             print("\n4. Enumerating valid plans from L(NFA_P2)...")
-        valid_plans = enumerate_valid_plans(nfa_p2)
+        enumeration_limit = 20 if max_plan_length is None else max_plan_length
+        valid_plans = enumerate_valid_plans(nfa_p2, enumeration_limit)
         if verbose:
             print(f"   Valid plans: {valid_plans if valid_plans else 'None'}")
     else:
@@ -1053,6 +1200,9 @@ def automata_based_plan_computation(
         'product': product,
         'nfa_p2': nfa_p2,
         'valid_plans': valid_plans,
+        'plan_enumeration_max_length': (
+            20 if max_plan_length is None else max_plan_length
+        ) if enumerate_plans else None,
         'language_nonempty': language_nonempty,
         'shortest_plan_length': shortest_plan_length,
         'stats': stats,
@@ -1415,9 +1565,9 @@ if __name__ == "__main__":
     parser.add_argument('--file', type=str, default='salon-4-0.25.kr',
                         help='Path to .kr file (default: salon-4-0.25.kr)')
     parser.add_argument(
-        '--arm2d2-model',
-        choices=discover_arm2d2_models(),
-        help='Run a Python model discovered in models/ through the planner',
+        '--model',
+        choices=discover_models(),
+        help='Run any Python model from models/ using its dotted path',
     )
     parser.add_argument('--deterministic', '-d', action='store_true',
                         help='Use deterministic NFA generation')
@@ -1425,6 +1575,18 @@ if __name__ == "__main__":
         '--exists-only',
         action='store_true',
         help='Compute plan existence and shortest length without enumerating words',
+    )
+    parser.add_argument(
+        '--regex', action='store_true',
+        help='Print a readable expression for the complete valid-plan language',
+    )
+    parser.add_argument(
+        '--regex-syntax', choices=('readable', 'python'), default='readable',
+        help='Expression notation used with --regex (default: readable)',
+    )
+    parser.add_argument(
+        '--automaton', '--print-final-automaton', action='store_true',
+        help='Print the final NFA_P2 automaton instead of extracting a regex',
     )
     parser.add_argument(
         '--backend',
@@ -1444,21 +1606,32 @@ if __name__ == "__main__":
         default=None,
         help='Stop with an inconclusive result after this many product states',
     )
+    parser.add_argument(
+        '--max-plan-length',
+        type=int,
+        default=None,
+        help=(
+            'Enumerate accepted words containing at most this many actions '
+            '(default: 10 compact, 20 explicit)'
+        ),
+    )
     args = parser.parse_args()
-    if args.arm2d2_model and args.example:
-        parser.error('--arm2d2-model and --example cannot be used together')
-    if args.arm2d2_model and args.deterministic:
+    if args.example and args.model:
+        parser.error('--example and --model are mutually exclusive')
+    if args.model and args.deterministic:
         parser.error('--deterministic applies only to PLTS files')
     if args.backend != 'explicit' and (
         args.max_dfa_p1_states is not None or args.max_product_states is not None
     ):
         parser.error('state budgets currently apply only to --backend explicit')
+    if args.max_plan_length is not None and args.max_plan_length < 0:
+        parser.error('--max-plan-length must be non-negative')
     
     # Build the NFA
     if args.example:
         # Example NFA from the paper's figure
         # L(NFA) = {a, aa, b, ba}
-        # Valid plans: {b}, {ba}, {b, ba}
+        # Valid plans: {b}, {b a}, {b, b a}
         #example 1
         # my_nfa = NFA(
         #     states={"s0", "s1", "s2", "s3"},
@@ -1600,15 +1773,15 @@ if __name__ == "__main__":
         print(f"Initial: {my_nfa.initial_state}")
         print(f"Finals: {my_nfa.final_states}")
         print("L(NFA) = {a^n b | n >= 1} = {ab, aab, aaab, ...}")
-    elif args.arm2d2_model:
-        my_nfa = load_arm2d2_model(args.arm2d2_model)
+    elif args.model:
+        my_nfa = load_model(args.model)
         n_transitions = sum(
             len(successors)
             for action_map in my_nfa.transitions.values()
             for successors in action_map.values()
         )
         print("=" * 60)
-        print(f"ARM2D2 MODEL: {args.arm2d2_model}")
+        print(f"MODEL: {args.model}")
         print("=" * 60)
         print(f"Initial state: {my_nfa.initial_state}")
         print(f"States: {len(my_nfa.states)}")
@@ -1634,7 +1807,19 @@ if __name__ == "__main__":
         max_dfa_p1_states=args.max_dfa_p1_states,
         max_product_states=args.max_product_states,
         backend=args.backend,
+        max_plan_length=args.max_plan_length,
     )
+    if args.regex:
+        if result.get('inconclusive'):
+            print('Regex unavailable: automaton construction was inconclusive.')
+        else:
+            expression = nfa_p2_to_regex(result['nfa_p2'], syntax=args.regex_syntax)
+            print(f"Valid-plan regex ({args.regex_syntax}): {expression}")
+    if args.automaton:
+        if result.get('inconclusive'):
+            print('Final automaton unavailable: construction was inconclusive.')
+        else:
+            print(format_nfa_p2(result['nfa_p2']))
 
     # Print summary table
     print("\n" + "=" * 70)
@@ -1661,7 +1846,7 @@ if __name__ == "__main__":
             print(f"  ... and {len(result['unreachable_states']) - 10} more")
 
     print("\n" + "=" * 70)
-    print("VALID PLANS")
+    print("BOUNDED PLAN-LANGUAGE WORDS")
     print("=" * 70)
     if args.exists_only:
         if result.get('inconclusive'):
@@ -1674,10 +1859,13 @@ if __name__ == "__main__":
             print(f"Shortest valid plan length: {result['shortest_plan_length']}")
     elif result['valid_plans']:
         plans = sorted(result['valid_plans'], key=lambda x: (len(x), x))
-        print(f"L(NFA_P2): {len(plans)} words")
-        for p in plans[:15]:
+        limit = result.get('plan_enumeration_max_length')
+        print(f"L(NFA_P2), words with at most {limit} actions: {len(plans)}")
+        for p in plans:
             print(f"  {p}")
-        if len(plans) > 15:
-            print(f"  ... and {len(plans) - 15} more")
     else:
-        print("No valid plans found.")
+        limit = result.get('plan_enumeration_max_length')
+        if result['language_nonempty']:
+            print(f"No accepted words with at most {limit} actions.")
+        else:
+            print("The plan language is empty.")

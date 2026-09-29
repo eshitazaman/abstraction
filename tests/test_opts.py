@@ -57,7 +57,7 @@ def test_isolated_initial():
 
 def test_paper_example_still_accepts_b():
     """
-    The 'ab / aa / b / ba' NFA from the paper: L(NFA_P2) = {"b", "ba"}.
+    The 'ab / aa / b / ba' NFA from the paper: L(NFA_P2) = {"b", "b a"}.
     """
     nfa = NFA(
         states={"s0", "s1", "s2", "s3"},
@@ -73,8 +73,8 @@ def test_paper_example_still_accepts_b():
     )
     result = _stats(nfa, filter_dead_states=True, enumerate_plans=True)
     assert result["language_nonempty"] is True
-    assert result["valid_plans"] == {"b", "ba"}, result["valid_plans"]
-    return "PASS  paper example ⇒ {b, ba}"
+    assert result["valid_plans"] == {"b", "b a"}, result["valid_plans"]
+    return "PASS  paper example ⇒ {b, b a}"
 
 
 def test_budget_cap():

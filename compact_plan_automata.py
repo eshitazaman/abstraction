@@ -116,7 +116,6 @@ class CompactDFA:
             if self.present[source]
             for target in row
         )
-
     def materialize(self) -> dict:
         decoded = [self.nfa.decode(mask) for mask in self.beliefs]
         states = {
@@ -360,7 +359,12 @@ def _forward_reachable(
 
 
 def build_compact_product(dfa: CompactDFA) -> CompactProduct:
-    """Construct reachable product fibers without allocating pair objects."""
+    """Represent the initial product directly on P1 belief states.
+
+    Every state in a reachable belief is reached by the word that reaches that
+    belief. Thus its initial product fiber is exactly the belief mask; P2 may
+    subsequently shrink the fiber when it removes actions.
+    """
 
     allowed = []
     for belief, mask in enumerate(dfa.beliefs):
@@ -371,10 +375,9 @@ def build_compact_product(dfa: CompactDFA) -> CompactProduct:
                 for action, target in enumerate(dfa.transitions[belief])
             ]
         )
-    reachable = _forward_reachable(dfa, allowed)
     return CompactProduct(
         dfa=dfa,
-        reachable=tuple(reachable),
+        reachable=dfa.beliefs,
         allowed=tuple(tuple(row) for row in allowed),
     )
 
@@ -414,54 +417,8 @@ def _backward_coreachable(
     return coreachable
 
 
-def _universal_sources(
-    nfa: IndexedNFA, candidates: int, target_valid: int, action: int
-) -> int:
-    valid_sources = 0
-    for source in iter_bits(candidates):
-        if nfa.successors_within(source, action, target_valid):
-            valid_sources |= 1 << source
-    return valid_sources
-
-
-def _greatest_fixpoint(
-    dfa: CompactDFA,
-    reachable: Sequence[int],
-    allowed: Sequence[Sequence[int]],
-    coreachable: Sequence[int],
-) -> list[int]:
-    valid = list(coreachable)
-    queue = deque(index for index, mask in enumerate(valid) if mask)
-    queued = set(queue)
-    while queue:
-        belief = queue.popleft()
-        queued.discard(belief)
-        old = valid[belief]
-        keep = reachable[belief] if belief in dfa.finals else 0
-        if belief not in dfa.finals:
-            for action, target in enumerate(dfa.transitions[belief]):
-                if target == MISSING:
-                    continue
-                candidates = old & allowed[belief][action]
-                keep |= _universal_sources(
-                    dfa.nfa, candidates, valid[target], action
-                )
-        new = old & keep
-        if new == old:
-            continue
-        valid[belief] = new
-        for predecessor, _ in dfa.predecessors[belief]:
-            if predecessor not in queued:
-                queued.add(predecessor)
-                queue.append(predecessor)
-        if belief not in queued:
-            queued.add(belief)
-            queue.append(belief)
-    return valid
-
-
 def compute_compact_nfa_p2(product: CompactProduct) -> CompactP2:
-    """Apply the exact P2 refinement to compact product fibers."""
+    """Apply Algorithm 2's dead-state belief closure to compact fibers."""
 
     dfa = product.dfa
     reachable = list(product.reachable)
@@ -470,26 +427,22 @@ def compute_compact_nfa_p2(product: CompactProduct) -> CompactP2:
     while True:
         iterations += 1
         coreachable = _backward_coreachable(dfa, reachable, allowed)
-        valid = _greatest_fixpoint(dfa, reachable, allowed, coreachable)
-        if not any(mask & ~valid[i] for i, mask in enumerate(reachable)):
-            break
+        dead_beliefs = {
+            belief for belief, mask in enumerate(reachable)
+            if mask & ~coreachable[belief]
+        }
 
         changed = False
-        for belief, mask in enumerate(reachable):
-            for action, target in enumerate(dfa.transitions[belief]):
-                if target == MISSING:
-                    continue
-                old = allowed[belief][action]
-                active = old & mask
-                good = _universal_sources(dfa.nfa, active, valid[target], action)
-                new = (old & ~mask) | good
-                if new != old:
-                    allowed[belief][action] = new
+        for belief, row in enumerate(dfa.transitions):
+            for action, target in enumerate(row):
+                if target in dead_beliefs and allowed[belief][action]:
+                    # Since belief is the B (and implicitly contains the bitmask for the NFA states)
+                    # Disabling action for this "belief" will disable every instance of a state with "belief" as second component
+                    allowed[belief][action] = 0
                     changed = True
-        reachable = _forward_reachable(dfa, allowed)
         if not changed:
-            coreachable = _backward_coreachable(dfa, reachable, allowed)
             break
+        reachable = _forward_reachable(dfa, allowed)
     return CompactP2(
         product=product,
         reachable=tuple(reachable),
@@ -516,7 +469,7 @@ def enumerate_valid_plans(p2: CompactP2, max_length=10, *, as_strings=True):
     while stack:
         belief, states, word = stack.pop()
         if belief in p2.dfa.finals and states:
-            results.add("".join(word) if as_strings else word)
+            results.add(" ".join(word) if as_strings else word)
         if len(word) == max_length:
             continue
         for action, target in enumerate(p2.dfa.transitions[belief]):
@@ -529,8 +482,8 @@ def enumerate_valid_plans(p2: CompactP2, max_length=10, *, as_strings=True):
     return results
 
 
-def shortest_accepting_word(p2: CompactP2):
-    """Return one shortest accepted word as a tuple of action symbols."""
+def _shortest_accepting_layers(p2: CompactP2):
+    """Return backward P2 layers through a shortest accepting word, if any."""
 
     if not p2.language_nonempty:
         return None
@@ -555,6 +508,22 @@ def shortest_accepting_word(p2: CompactP2):
         if current == previous:
             return None
         layers.append(current)
+    return layers
+
+
+def shortest_accepting_length(p2: CompactP2):
+    """Return the shortest accepted action count without reconstructing a word."""
+
+    layers = _shortest_accepting_layers(p2)
+    return None if layers is None else len(layers) - 1
+
+
+def shortest_accepting_word(p2: CompactP2):
+    """Return one shortest accepted word as a tuple of action symbols."""
+
+    layers = _shortest_accepting_layers(p2)
+    if layers is None:
+        return None
 
     belief = p2.dfa.initial
     state = p2.dfa.nfa.initial
@@ -577,8 +546,10 @@ def shortest_accepting_word(p2: CompactP2):
     return tuple(word)
 
 
-def compact_statistics(p2: CompactP2, shortest_word=None) -> dict:
-    if shortest_word is None and p2.language_nonempty:
+def compact_statistics(
+    p2: CompactP2, shortest_word=None, *, compute_shortest_plan: bool = True
+) -> dict:
+    if compute_shortest_plan and shortest_word is None and p2.language_nonempty:
         shortest_word = shortest_accepting_word(p2)
     product = p2.product
     return {
@@ -607,15 +578,21 @@ def compact_plan_computation(
     enumerate_plans=True,
     max_length=10,
     verbose=True,
+    compute_shortest_plan: bool = False,
 ):
     """Run the complete bitmask pipeline and return native compact objects."""
+
+    if max_length < 0:
+        raise ValueError("max_length must be non-negative")
 
     dfa = build_compact_dfa_p1(nfa)
     product = build_compact_product(dfa)
     p2 = compute_compact_nfa_p2(product)
-    shortest = shortest_accepting_word(p2)
+    shortest = shortest_accepting_word(p2) if compute_shortest_plan else None
     plans = enumerate_valid_plans(p2, max_length) if enumerate_plans else None
-    stats = compact_statistics(p2, shortest)
+    stats = compact_statistics(
+        p2, shortest, compute_shortest_plan=compute_shortest_plan
+    )
     if verbose:
         print(
             "[compact] "
@@ -628,6 +605,7 @@ def compact_plan_computation(
         "product": product,
         "nfa_p2": p2,
         "valid_plans": plans,
+        "plan_enumeration_max_length": max_length if enumerate_plans else None,
         "language_nonempty": p2.language_nonempty,
         "shortest_plan_length": stats["shortest_plan_length"],
         "shortest_plan_actions": shortest,
