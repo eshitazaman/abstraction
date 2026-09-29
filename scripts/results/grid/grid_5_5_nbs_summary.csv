@@ -1,0 +1,7 @@
+classification,statistic,nfa_states,nfa_transitions,dfa_p1_states,dfa_p1_transitions,nfa_p2_states,nfa_p2_transitions,runtime_seconds,runtime_std,run_peak_rss_mib,run_peak_rss_mib_std
+has plan,min,16,52,69,197,217,781,0.001213,,37.605,
+has plan,max,20,71,335,994,1438,5070,0.007852,,37.684,
+has plan,avg,19.68,62.34,206.4,606.0,850.9,2892.4,0.00272534,0.0009651568046442092,37.67626,0.020384878349063273
+does not have plan,min,1,0,1,0,1,0,0.00036,,37.684,
+does not have plan,max,19,66,221,649,1,0,0.003506,,37.934,
+does not have plan,avg,9.38,29.04,64.04,185.78,1.0,0.0,0.00102632,0.0007254987711490458,37.83728,0.04801999583506894
