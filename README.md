@@ -106,6 +106,22 @@ python plan_automata.py --file example.kr --backend compact --automaton --exists
 It prints the initial state, final states, and every labelled transition. The
 compact backend materializes its final automaton only for this listing.
 
+Use `--dfa-p1-dot` to print DFA\(_{P1}\) in Graphviz DOT format alongside
+the usual planner output. Supply a filename to save a standalone DOT file:
+
+```bash
+python plan_automata.py --example --exists-only --dfa-p1-dot
+python plan_automata.py --model arm2d2.r10_center_clamp --backend compact --exists-only --dfa-p1-dot dfa_p1.dot
+dot -Tsvg dfa_p1.dot -o dfa_p1.svg
+```
+
+Both backends show NFA state subsets as node labels, an initial-state arrow,
+double circles for accepting states, and action labels on edges. DOT export
+needs no additional Python packages; rendering requires Graphviz. Requesting
+DOT builds DFA_P1 even when the initial NFA state cannot reach a final state.
+If a DFA state budget is exceeded, the graph is labelled partial and unexpanded
+states have dashed outlines.
+
 ### Run an Arm2D2 Python model
 
 Arm2D2 variants use the same `build_nfa()` interface as every other model.

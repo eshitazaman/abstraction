@@ -12,6 +12,7 @@ The approach:
 """
 
 import ast
+import json
 from collections import deque
 from importlib import import_module
 from pathlib import Path
@@ -798,6 +799,52 @@ def nfa_p2_to_regex(nfa_p2, *, syntax='readable'):
     # Arden's lemma yields the language of the initial state.
     result = concat(star(coeffs[initial].get(initial)), constants[initial])
     return result[0] if result is not None else empty
+
+
+def format_dfa_p1_dot(dfa_p1):
+    """Return Graphviz DOT for an explicit or compact DFA_P1.
+
+    Nodes use generated IDs and readable subset labels. Partial constructions
+    include referenced but unexpanded states as dashed nodes.
+    """
+    if not isinstance(dfa_p1, dict):
+        dfa_p1 = dfa_p1.materialize()
+
+    def value_key(value):
+        return type(value).__name__, repr(value)
+
+    def state_key(state):
+        return tuple(sorted((value_key(value) for value in state)))
+
+    def quote(value):
+        return json.dumps(str(value), ensure_ascii=False)
+
+    initial = dfa_p1['initial']
+    finals = dfa_p1['finals']
+    transitions = dfa_p1['transitions']
+    states = set(dfa_p1['states']) | {initial} | set(finals)
+    for source, actions in transitions.items():
+        states.add(source)
+        states.update(actions.values())
+    ordered = sorted(states, key=state_key)
+    node_ids = {state: f'q{index}' for index, state in enumerate(ordered)}
+
+    lines = ['digraph DFA_P1 {', '  rankdir=LR;']
+    if dfa_p1.get('truncated'):
+        lines.append('  label="DFA_P1 (partial: state budget exceeded)";')
+    lines.extend(['  __start [shape=point, label=""];',
+                  f'  __start -> {node_ids[initial]};'])
+    for state in ordered:
+        label = '{' + ', '.join(str(value) for value in sorted(state, key=value_key)) + '}'
+        shape = 'doublecircle' if state in finals else 'circle'
+        style = ', style=dashed' if state not in dfa_p1['states'] else ''
+        lines.append(f'  {node_ids[state]} [shape={shape}{style}];')
+    for source in ordered:
+        for action, target in sorted(transitions.get(source, {}).items(),
+                                     key=lambda item: value_key(item[0])):
+            lines.append(f'  {node_ids[source]} -> {node_ids[target]} [label={quote(action)}];')
+    lines.append('}')
+    return '\n'.join(lines)
 
 
 def format_nfa_p2(nfa_p2):
@@ -1612,6 +1659,10 @@ if __name__ == "__main__":
         help='Print the final NFA_P2 automaton instead of extracting a regex',
     )
     parser.add_argument(
+        '--dfa-p1-dot', nargs='?', const='-', metavar='FILE',
+        help='Print DFA_P1 in Graphviz DOT format, or write it to FILE if supplied',
+    )
+    parser.add_argument(
         '--backend',
         choices=('explicit', 'compact'),
         default='explicit',
@@ -1831,7 +1882,15 @@ if __name__ == "__main__":
         max_product_states=args.max_product_states,
         backend=args.backend,
         max_plan_length=args.max_plan_length,
+        filter_dead_states=args.dfa_p1_dot is None,
     )
+    if args.dfa_p1_dot is not None:
+        dot = format_dfa_p1_dot(result['dfa_p1'])
+        if args.dfa_p1_dot == '-':
+            print(dot)
+        else:
+            Path(args.dfa_p1_dot).write_text(dot + '\n', encoding='utf-8')
+            print(f'Wrote DFA_P1 Graphviz DOT to: {args.dfa_p1_dot}')
     if args.regex:
         if result.get('inconclusive'):
             print('Regex unavailable: automaton construction was inconclusive.')
