@@ -83,3 +83,32 @@ def test_formats_final_automaton_for_compact_backend():
     listing = format_nfa_p2(result['nfa_p2'])
     assert 'FINAL NFA_P2' in listing
     assert "--'go'-->" in listing
+
+
+def test_compact_brzozowski_matches_plan_enumeration_without_materializing():
+    from itertools import product
+    from unittest.mock import patch
+
+    from compact_plan_automata import CompactP2, enumerate_valid_plans
+
+    nfa = NFA(
+        states={'s', 'f'}, input_symbols={'a', 'b'},
+        transitions={
+            's': {'a': {'s', 'f'}, 'b': {'f'}},
+            'f': {'a': {'f'}, 'b': {'f'}},
+        },
+        initial_state='s', final_states={'f'},
+    )
+    result = automata_based_plan_computation(
+        nfa, backend='compact', verbose=False, enumerate_plans=False,
+    )
+    p2 = result['nfa_p2']
+    expected = enumerate_valid_plans(p2, 4, as_strings=False)
+    with patch.object(CompactP2, 'materialize', side_effect=AssertionError):
+        regex = nfa_p2_to_regex(p2, syntax='python')
+
+    for length in range(5):
+        for word in product('ab', repeat=length):
+            assert (re.fullmatch(regex, ''.join(word)) is not None) == (
+                word in expected
+            )

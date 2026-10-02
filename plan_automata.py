@@ -689,32 +689,44 @@ def nfa_p2_to_regex(nfa_p2, *, syntax='readable'):
     #     X_q = (ε if q is final) + Σ action(q, r) X_r.
     #
     # Brzozowski's algebraic method eliminates variables from this system and
-    # uses Arden's lemma to remove a variable's self-reference.  ``coeffs[q]``
-    # stores the variable coefficients in q's equation; ``constants[q]`` stores
-    # its variable-free term.
-    coeffs = {}
-    constants = {}
+    # uses Arden's lemma to remove a variable's self-reference. Use dense IDs
+    # and sparse equations so the compact backend never materializes NFA_P2.
+    coeffs = []
+    incoming = []
+    constants = []
+
+    def add_state(final):
+        state = len(coeffs)
+        coeffs.append({})
+        incoming.append(set())
+        constants.append((epsilon, 4) if final else None)
+        return state
 
     def add_coefficient(source, target, expr):
-        equation = coeffs.setdefault(source, {})
+        equation = coeffs[source]
+        if target not in equation:
+            incoming[target].add(source)
         equation[target] = union(equation.get(target), expr)
 
     if isinstance(nfa_p2, CompactP2):
         if not nfa_p2.language_nonempty:
             return empty
         dfa = nfa_p2.dfa
-        # Use integer pair IDs directly. Only states that can reach a final
-        # state can contribute to the expression; no decoded product is built.
+        # Only states on accepting paths contribute to the expression.
         useful = tuple(reachable & coreachable for reachable, coreachable
                        in zip(nfa_p2.reachable, nfa_p2.coreachable))
-        states = {(belief, state) for belief, mask in enumerate(useful)
-                  for state in iter_bits(mask)}
-        initial = (dfa.initial, dfa.nfa.initial)
-        finals = {(belief, state) for belief in dfa.finals
-                  for state in iter_bits(useful[belief])}
+        state_ids = []
+        for belief, mask in enumerate(useful):
+            state_ids.append({
+                state: add_state(belief in dfa.finals)
+                for state in iter_bits(mask)
+            })
+        initial = state_ids[dfa.initial].get(dfa.nfa.initial)
+        if initial is None:
+            return empty
         for belief, mask in enumerate(useful):
             for action, target_belief in enumerate(dfa.transitions[belief]):
-                if target_belief == MISSING:
+                if target_belief == MISSING or not useful[target_belief]:
                     continue
                 sources = mask & nfa_p2.allowed[belief][action]
                 literal = action_expr(dfa.nfa.actions[action])
@@ -723,55 +735,66 @@ def nfa_p2_to_regex(nfa_p2, *, syntax='readable'):
                                & useful[target_belief])
                     for target in iter_bits(targets):
                         add_coefficient(
-                            (belief, source), (target_belief, target), literal,
+                            state_ids[belief][source],
+                            state_ids[target_belief][target], literal,
                         )
     else:
-        initial = nfa_p2.get('initial')
+        initial_state = nfa_p2.get('initial')
         finals = nfa_p2.get('finals', set())
-        if initial is None or not finals:
+        if initial_state is None or not finals:
             return empty
-        states = set(nfa_p2.get('states', ())) | {initial} | set(finals)
+        states = set(nfa_p2.get('states', ())) | {initial_state} | set(finals)
         for source, actions in nfa_p2.get('transitions', {}).items():
             states.add(source)
             for successors in actions.values():
                 states.update(successors)
+        state_ids = {state: add_state(state in finals)
+                     for state in sorted(states, key=str)}
+        initial = state_ids[initial_state]
         for source, actions in nfa_p2.get('transitions', {}).items():
             for action, successors in actions.items():
                 literal = action_expr(action)
                 for target in successors:
-                    add_coefficient(source, target, literal)
+                    add_coefficient(state_ids[source], state_ids[target], literal)
 
-    for state in states:
-        coeffs.setdefault(state, {})
-        constants[state] = (epsilon, 4) if state in finals else None
-
-    # Keep the initial variable until last.  For an eliminated variable k,
-    # Arden's lemma changes X_k = A X_k + B into X_k = A* B; substituting that
-    # expression into every remaining equation is analogous to Gaussian
-    # elimination over the regular-language semiring.
-    for state in sorted(states - {initial}, key=str):
+    # Keep the initial variable until last. For an eliminated variable k,
+    # Arden's lemma changes X_k = A X_k + B into X_k = A* B; substitute that
+    # expression into its incoming equations. Prefer variables with few
+    # incoming/outgoing terms to limit expression growth.
+    remaining = set(range(len(coeffs))) - {initial}
+    while remaining:
+        state = min(
+            remaining,
+            key=lambda candidate: (
+                (len(incoming[candidate]) - (candidate in incoming[candidate]))
+                * (len(coeffs[candidate]) - (candidate in coeffs[candidate])),
+                candidate,
+            ),
+        )
         equation = coeffs[state]
         loop = star(equation.pop(state, None))
+        incoming[state].discard(state)
         solved_coefficients = {
             target: concat(loop, expr) for target, expr in equation.items()
         }
         solved_constant = concat(loop, constants[state])
 
-        for source in states:
-            if source == state:
-                continue
-            multiplier = coeffs[source].pop(state, None)
-            if multiplier is None:
-                continue
+        for source in tuple(incoming[state]):
+            multiplier = coeffs[source].pop(state)
             for target, expr in solved_coefficients.items():
-                coeffs[source][target] = union(
-                    coeffs[source].get(target), concat(multiplier, expr),
+                add_coefficient(
+                    source, target, concat(multiplier, expr),
                 )
             constants[source] = union(
                 constants[source], concat(multiplier, solved_constant),
             )
+        for target in equation:
+            incoming[target].discard(state)
+        equation.clear()
+        incoming[state].clear()
+        remaining.remove(state)
 
-    # The sole remaining variable can only refer to itself.  One final use of
+    # The sole remaining variable can only refer to itself. One final use of
     # Arden's lemma yields the language of the initial state.
     result = concat(star(coeffs[initial].get(initial)), constants[initial])
     return result[0] if result is not None else empty
